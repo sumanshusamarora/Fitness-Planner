@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, ne } from "drizzle-orm";
 import { db } from "../db";
 import {
   exerciseMedia,
@@ -9,9 +9,10 @@ import {
   workoutSessionExercises,
   workoutSessions,
   workoutSets,
-  users,
 } from "../db/schema";
 import { formatDuration } from "./dates";
+import { getApprovedExternalReferences } from "./external-exercises";
+import { sanitizeInstructionsHtml } from "./external-exercises/sanitize";
 import { extractYoutubeVideoId } from "./media";
 import {
   recommendNextWeight,
@@ -46,6 +47,16 @@ export interface ExerciseMedia {
   youtubeTitle: string | null;
   articleUrl: string | null;
   articleTitle: string | null;
+}
+
+/** Approved external catalogue reference (already sanitized) for enrichment. */
+export interface ExerciseExternalReference {
+  provider: string;
+  name: string;
+  sourceUrl: string | null;
+  instructionsHtml: string | null;
+  videoUrl: string | null;
+  imageUrl: string | null;
 }
 
 export async function getExerciseMediaMap(
@@ -87,16 +98,36 @@ export async function getExerciseMediaMap(
   return map;
 }
 
-export async function getSingleUser() {
-  const rows = await db.select().from(users).orderBy(users.id).limit(1);
-  return rows[0] ?? null;
+function buildExternalReference(
+  reference:
+    | {
+        provider: string;
+        name: string;
+        sourceUrl: string | null;
+        instructionsSource: string | null;
+        videoUrl: string | null;
+        imageUrl: string | null;
+      }
+    | undefined,
+): ExerciseExternalReference | null {
+  if (!reference) return null;
+  return {
+    provider: reference.provider,
+    name: reference.name,
+    sourceUrl: reference.sourceUrl,
+    instructionsHtml: reference.instructionsSource
+      ? sanitizeInstructionsHtml(reference.instructionsSource)
+      : null,
+    videoUrl: reference.videoUrl,
+    imageUrl: reference.imageUrl,
+  };
 }
 
-export async function getActivePlan() {
+export async function getActivePlan(userId: number) {
   const rows = await db
     .select()
     .from(workoutPlans)
-    .where(eq(workoutPlans.status, "active"))
+    .where(and(eq(workoutPlans.userId, userId), eq(workoutPlans.status, "active")))
     .orderBy(desc(workoutPlans.createdAt))
     .limit(1);
   return rows[0] ?? null;
@@ -144,8 +175,8 @@ export function estimateDurationMinutes(planExercises: PlanExercise[]): number {
   return Math.max(1, Math.round(seconds / 60));
 }
 
-/** Sets from the most recent *completed* session for an exercise. */
-export async function getLastCompletedSets(exerciseId: number) {
+/** Sets from the most recent *completed* session for an exercise (user-scoped). */
+export async function getLastCompletedSets(userId: number, exerciseId: number) {
   const rows = await db
     .select({
       setNumber: workoutSets.setNumber,
@@ -165,8 +196,9 @@ export async function getLastCompletedSets(exerciseId: number) {
     )
     .where(
       and(
+        eq(workoutSessions.userId, userId),
         eq(workoutSessionExercises.exerciseId, exerciseId),
-        isNotNull(workoutSessions.completedAt),
+        eq(workoutSessions.status, "completed"),
       ),
     )
     .orderBy(desc(workoutSessions.startedAt), asc(workoutSets.setNumber));
@@ -192,10 +224,11 @@ export function summarizeLastTime(sets: {
 }
 
 export async function computeRecommendation(
+  userId: number,
   planExercise: PlanExercise,
   recovery: RecoverySnapshot | null = null,
 ): Promise<ProgressionResult> {
-  const lastSets = await getLastCompletedSets(planExercise.exerciseId);
+  const lastSets = await getLastCompletedSets(userId, planExercise.exerciseId);
   return recommendNextWeight({
     targetSets: planExercise.targetSets,
     minReps: planExercise.minReps,
@@ -218,9 +251,9 @@ export async function createSession(userId: number, planDayId: number) {
     .values({ userId, workoutPlanDayId: planDayId })
     .returning();
 
-  const recovery = await getLatestRecoverySnapshot();
+  const recovery = await getLatestRecoverySnapshot(userId);
   for (const pe of planExercises) {
-    const recommendation = await computeRecommendation(pe, recovery);
+    const recommendation = await computeRecommendation(userId, pe, recovery);
     await db.insert(workoutSessionExercises).values({
       workoutSessionId: session.id,
       exerciseId: pe.exerciseId,
@@ -246,30 +279,33 @@ export interface SessionExerciseData {
   lastTime: LastTimeSummary | null;
   recommendationReason: string | null;
   media: ExerciseMedia | null;
+  externalReference: ExerciseExternalReference | null;
   loggedSets: {
     setNumber: number;
     weightKg: number;
     reps: number;
     rpe: number | null;
   }[];
-  completed: boolean;
+  status: "pending" | "completed" | "skipped" | "not_attempted";
+  skipReason: string | null;
 }
 
 export interface ActiveWorkoutData {
   sessionId: number;
   title: string;
-  completed: boolean;
+  status: "in_progress" | "completed" | "ended_early" | "skipped";
   exercises: SessionExerciseData[];
 }
 
 export async function getActiveWorkoutData(
+  userId: number,
   sessionId: number,
 ): Promise<ActiveWorkoutData | null> {
   const session = (
     await db
       .select()
       .from(workoutSessions)
-      .where(eq(workoutSessions.id, sessionId))
+      .where(and(eq(workoutSessions.id, sessionId), eq(workoutSessions.userId, userId)))
       .limit(1)
   )[0];
   if (!session) return null;
@@ -292,8 +328,11 @@ export async function getActiveWorkoutData(
     sseRows.map((row) => [row.exerciseId, row]),
   );
 
-  const recovery = await getLatestRecoverySnapshot();
+  const recovery = await getLatestRecoverySnapshot(userId);
   const mediaMap = await getExerciseMediaMap(
+    planExercises.map((pe) => pe.exerciseId),
+  );
+  const referenceMap = await getApprovedExternalReferences(
     planExercises.map((pe) => pe.exerciseId),
   );
 
@@ -313,7 +352,7 @@ export async function getActiveWorkoutData(
           .orderBy(asc(workoutSets.setNumber))
       : [];
 
-    const lastSets = await getLastCompletedSets(pe.exerciseId);
+    const lastSets = await getLastCompletedSets(userId, pe.exerciseId);
     const recommendation = recommendNextWeight({
       targetSets: pe.targetSets,
       minReps: pe.minReps,
@@ -341,15 +380,19 @@ export async function getActiveWorkoutData(
       lastTime: summarizeLastTime(lastSets),
       recommendationReason: recommendation.reason,
       media: mediaMap.get(pe.exerciseId) ?? null,
+      externalReference: buildExternalReference(
+        referenceMap.get(pe.exerciseId),
+      ),
       loggedSets: sets,
-      completed: sse?.completed ?? false,
+      status: (sse?.status as SessionExerciseData["status"]) ?? "pending",
+      skipReason: sse?.skipReason ?? null,
     });
   }
 
   return {
     sessionId,
     title: planDay?.title ?? "Workout",
-    completed: session.completedAt != null,
+    status: session.status as ActiveWorkoutData["status"],
     exercises: exercisesData,
   };
 }
@@ -359,20 +402,26 @@ export interface SessionSummary {
   title: string;
   startedAt: Date;
   completedAt: Date | null;
+  status: "in_progress" | "completed" | "ended_early" | "skipped";
+  endReason: string | null;
   exerciseCount: number;
+  completedExerciseCount: number;
+  skippedExerciseCount: number;
+  notAttemptedExerciseCount: number;
   setCount: number;
   durationText: string;
   inProgress: boolean;
 }
 
 export async function getSessionSummary(
+  userId: number,
   sessionId: number,
 ): Promise<SessionSummary | null> {
   const session = (
     await db
       .select()
       .from(workoutSessions)
-      .where(eq(workoutSessions.id, sessionId))
+      .where(and(eq(workoutSessions.id, sessionId), eq(workoutSessions.userId, userId)))
       .limit(1)
   )[0];
   if (!session) return null;
@@ -385,8 +434,8 @@ export async function getSessionSummary(
       .limit(1)
   )[0];
 
-  const exerciseCountRow = await db
-    .select({ c: count() })
+  const sseRows = await db
+    .select({ status: workoutSessionExercises.status })
     .from(workoutSessionExercises)
     .where(eq(workoutSessionExercises.workoutSessionId, sessionId));
 
@@ -399,6 +448,12 @@ export async function getSessionSummary(
     )
     .where(eq(workoutSessionExercises.workoutSessionId, sessionId));
 
+  const completedExerciseCount = sseRows.filter((r) => r.status === "completed").length;
+  const skippedExerciseCount = sseRows.filter((r) => r.status === "skipped").length;
+  const notAttemptedExerciseCount = sseRows.filter(
+    (r) => r.status === "not_attempted",
+  ).length;
+
   const end = session.completedAt ?? new Date();
 
   return {
@@ -406,10 +461,15 @@ export async function getSessionSummary(
     title: planDay?.title ?? "Workout",
     startedAt: session.startedAt,
     completedAt: session.completedAt,
-    exerciseCount: exerciseCountRow[0]?.c ?? 0,
+    status: session.status as SessionSummary["status"],
+    endReason: session.endReason,
+    exerciseCount: sseRows.length,
+    completedExerciseCount,
+    skippedExerciseCount,
+    notAttemptedExerciseCount,
     setCount: setCountRow[0]?.c ?? 0,
     durationText: formatDuration(session.startedAt, end),
-    inProgress: session.completedAt == null,
+    inProgress: session.status === "in_progress",
   };
 }
 
@@ -418,27 +478,31 @@ export interface HistoryEntry {
   title: string;
   startedAt: Date;
   completedAt: Date | null;
+  status: string;
 }
 
-export async function getSessionHistory(): Promise<HistoryEntry[]> {
+export async function getSessionHistory(userId: number): Promise<HistoryEntry[]> {
   return db
     .select({
       id: workoutSessions.id,
       title: workoutPlanDays.title,
       startedAt: workoutSessions.startedAt,
       completedAt: workoutSessions.completedAt,
+      status: workoutSessions.status,
     })
     .from(workoutSessions)
     .innerJoin(
       workoutPlanDays,
       eq(workoutSessions.workoutPlanDayId, workoutPlanDays.id),
     )
-    .where(isNotNull(workoutSessions.completedAt))
+    .where(and(eq(workoutSessions.userId, userId), ne(workoutSessions.status, "in_progress")))
     .orderBy(desc(workoutSessions.startedAt));
 }
 
 export interface SessionDetailExercise {
   name: string;
+  status: string | null;
+  skipReason: string | null;
   sets: {
     setNumber: number;
     weightKg: number;
@@ -452,6 +516,8 @@ export interface SessionDetail {
   title: string;
   startedAt: Date;
   completedAt: Date;
+  status: string;
+  endReason: string | null;
   overallRpe: number | null;
   energyRating: string | null;
   durationText: string;
@@ -459,16 +525,17 @@ export interface SessionDetail {
 }
 
 export async function getSessionDetail(
+  userId: number,
   sessionId: number,
 ): Promise<SessionDetail | null> {
   const session = (
     await db
       .select()
       .from(workoutSessions)
-      .where(eq(workoutSessions.id, sessionId))
+      .where(and(eq(workoutSessions.id, sessionId), eq(workoutSessions.userId, userId)))
       .limit(1)
   )[0];
-  if (!session || session.completedAt == null) return null;
+  if (!session || session.status === "in_progress") return null;
 
   const planDay = (
     await db
@@ -506,6 +573,8 @@ export async function getSessionDetail(
 
     exercisesData.push({
       name: ex?.name ?? "Exercise",
+      status: sse.status,
+      skipReason: sse.skipReason,
       sets,
     });
   }
@@ -514,10 +583,132 @@ export async function getSessionDetail(
     id: session.id,
     title: planDay?.title ?? "Workout",
     startedAt: session.startedAt,
-    completedAt: session.completedAt,
+    completedAt: session.completedAt ?? new Date(),
+    status: session.status,
+    endReason: session.endReason,
     overallRpe: session.overallRpe,
     energyRating: session.energyRating,
-    durationText: formatDuration(session.startedAt, session.completedAt),
+    durationText: formatDuration(session.startedAt, session.completedAt ?? new Date()),
     exercises: exercisesData,
   };
+}
+
+async function requireOwnedSession(userId: number, sessionId: number) {
+  const session = (
+    await db
+      .select()
+      .from(workoutSessions)
+      .where(and(eq(workoutSessions.id, sessionId), eq(workoutSessions.userId, userId)))
+      .limit(1)
+  )[0];
+  if (!session) throw new Error("Session not found.");
+  return session;
+}
+
+export async function completeSessionExercise(
+  userId: number,
+  sessionId: number,
+  exerciseId: number,
+) {
+  await requireOwnedSession(userId, sessionId);
+  return db
+    .update(workoutSessionExercises)
+    .set({ completed: true, status: "completed" })
+    .where(
+      and(
+        eq(workoutSessionExercises.workoutSessionId, sessionId),
+        eq(workoutSessionExercises.exerciseId, exerciseId),
+      ),
+    )
+    .returning();
+}
+
+export async function skipSessionExercise(
+  userId: number,
+  sessionId: number,
+  exerciseId: number,
+  reason: string,
+) {
+  await requireOwnedSession(userId, sessionId);
+  return db
+    .update(workoutSessionExercises)
+    .set({ completed: false, status: "skipped", skipReason: reason })
+    .where(
+      and(
+        eq(workoutSessionExercises.workoutSessionId, sessionId),
+        eq(workoutSessionExercises.exerciseId, exerciseId),
+      ),
+    )
+    .returning();
+}
+
+async function markRemainingNotAttempted(sessionId: number) {
+  await db
+    .update(workoutSessionExercises)
+    .set({ status: "not_attempted" })
+    .where(
+      and(
+        eq(workoutSessionExercises.workoutSessionId, sessionId),
+        eq(workoutSessionExercises.status, "pending"),
+      ),
+    );
+}
+
+export async function finishSession(
+  userId: number,
+  sessionId: number,
+  input: { energyRating?: string | null; overallRpe?: number | null },
+) {
+  await requireOwnedSession(userId, sessionId);
+  const [session] = await db
+    .update(workoutSessions)
+    .set({
+      status: "completed",
+      completedAt: new Date(),
+      energyRating: input.energyRating ?? null,
+      overallRpe: input.overallRpe ?? null,
+    })
+    .where(and(eq(workoutSessions.id, sessionId), eq(workoutSessions.userId, userId)))
+    .returning();
+  await markRemainingNotAttempted(sessionId);
+  return session;
+}
+
+export async function endSessionEarly(
+  userId: number,
+  sessionId: number,
+  input: { reason?: string | null; energyRating?: string | null; overallRpe?: number | null },
+) {
+  await requireOwnedSession(userId, sessionId);
+  const [session] = await db
+    .update(workoutSessions)
+    .set({
+      status: "ended_early",
+      completedAt: new Date(),
+      endReason: input.reason ?? null,
+      energyRating: input.energyRating ?? null,
+      overallRpe: input.overallRpe ?? null,
+    })
+    .where(and(eq(workoutSessions.id, sessionId), eq(workoutSessions.userId, userId)))
+    .returning();
+  await markRemainingNotAttempted(sessionId);
+  return session;
+}
+
+export async function createSkippedSession(
+  userId: number,
+  planDayId: number,
+  reason: string | null,
+) {
+  const [session] = await db
+    .insert(workoutSessions)
+    .values({
+      userId,
+      workoutPlanDayId: planDayId,
+      status: "skipped",
+      completedAt: new Date(),
+      endReason: reason,
+    })
+    .returning();
+  return session;
 }

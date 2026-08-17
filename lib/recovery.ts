@@ -1,12 +1,15 @@
-import { desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { db } from "../db";
 import { recoveryLogs } from "../db/schema";
 import type { RecoverySnapshot } from "./progression";
 
-export async function getLatestRecoverySnapshot(): Promise<RecoverySnapshot | null> {
+export async function getLatestRecoverySnapshot(
+  userId: number,
+): Promise<RecoverySnapshot | null> {
   const rows = await db
     .select()
     .from(recoveryLogs)
+    .where(eq(recoveryLogs.userId, userId))
     .orderBy(desc(recoveryLogs.createdAt))
     .limit(1);
   const r = rows[0];

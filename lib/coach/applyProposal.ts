@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { weeklyPlanProposals, workoutPlanDays, workoutPlanExercises, workoutPlans } from "@/db/schema";
 import { parseWeeklyPlanProposal } from "./schemas";
-import { validateProposal } from "./validateProposal";
+import { validateInitialWeekProposal, validateProposal } from "./validateProposal";
 import type { ProposalDecision } from "./types";
 
 export interface ApplyProposalOptions {
@@ -15,6 +15,7 @@ export interface ApplyProposalOptions {
  * An explicit `confirmation: "approve"` is required even for code callers.
  */
 export async function applyProposal(
+  userId: number,
   proposalId: number,
   options: ApplyProposalOptions,
 ): Promise<{ planId: number; weekNumber: number }> {
@@ -28,23 +29,33 @@ export async function applyProposal(
       .limit(1);
     const record = rows[0];
     if (!record) throw new Error("Proposal not found.");
+    if (record.userId !== userId) throw new Error("Proposal not found.");
     if (record.status === "applied" && record.appliedPlanId) {
       return { planId: record.appliedPlanId, weekNumber: record.proposedWeekNumber };
     }
     if (record.status === "rejected") throw new Error("Rejected proposals cannot be applied.");
-    const proposal = validateProposal(parseWeeklyPlanProposal(record.proposal));
+
+    const isInitial = record.proposalType === "initial_week";
+    const proposal = isInitial
+      ? validateInitialWeekProposal(parseWeeklyPlanProposal(record.proposal))
+      : validateProposal(parseWeeklyPlanProposal(record.proposal));
     if (proposal.questions.length > 0 || proposal.confidence === "needs-input") {
       throw new Error("This proposal needs an answer before it can be approved.");
     }
-    const sourceRows = await tx
-      .select()
-      .from(workoutPlans)
-      .where(
-        and(eq(workoutPlans.id, record.sourcePlanId), eq(workoutPlans.userId, record.userId)),
-      )
-      .limit(1);
-    const sourcePlan = sourceRows[0];
-    if (!sourcePlan) throw new Error("Source week no longer exists.");
+
+    let sourcePlanNotes: string | null = null;
+    if (!isInitial) {
+      const sourceRows = await tx
+        .select()
+        .from(workoutPlans)
+        .where(
+          and(eq(workoutPlans.id, record.sourcePlanId!), eq(workoutPlans.userId, record.userId)),
+        )
+        .limit(1);
+      const sourcePlan = sourceRows[0];
+      if (!sourcePlan) throw new Error("Source week no longer exists.");
+      sourcePlanNotes = sourcePlan.notes;
+    }
 
     const [newPlan] = await tx
       .insert(workoutPlans)
@@ -54,7 +65,7 @@ export async function applyProposal(
         weekNumber: proposal.proposedWeekNumber,
         startsOn: proposal.proposedStartsOn,
         status: "active",
-        notes: sourcePlan.notes,
+        notes: sourcePlanNotes,
       })
       .returning();
 
@@ -86,10 +97,12 @@ export async function applyProposal(
       }
     }
 
-    await tx
-      .update(workoutPlans)
-      .set({ status: "completed" })
-      .where(eq(workoutPlans.id, sourcePlan.id));
+    if (!isInitial && record.sourcePlanId) {
+      await tx
+        .update(workoutPlans)
+        .set({ status: "completed" })
+        .where(eq(workoutPlans.id, record.sourcePlanId));
+    }
     await tx
       .update(weeklyPlanProposals)
       .set({

@@ -1,14 +1,30 @@
 import { and, count, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { workoutSessionExercises, workoutSets } from "@/db/schema";
+import { workoutSessionExercises, workoutSessions, workoutSets } from "@/db/schema";
+import { currentUserOrNull } from "@/lib/session";
 
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const user = await currentUserOrNull();
+  if (!user) {
+    return NextResponse.json({ error: "No profile selected" }, { status: 401 });
+  }
   const { id } = await params;
   const sessionId = Number(id);
+
+  const session = (
+    await db
+      .select({ id: workoutSessions.id })
+      .from(workoutSessions)
+      .where(and(eq(workoutSessions.id, sessionId), eq(workoutSessions.userId, user.id)))
+      .limit(1)
+  )[0];
+  if (!session) {
+    return NextResponse.json({ error: "Session not found" }, { status: 404 });
+  }
 
   const body = (await req.json()) as {
     exerciseId?: number;
@@ -28,10 +44,7 @@ export async function POST(
     weightKg < 0 ||
     reps < 0
   ) {
-    return NextResponse.json(
-      { error: "Invalid weight or reps" },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "Invalid weight or reps" }, { status: 400 });
   }
 
   const sse = (
@@ -48,10 +61,7 @@ export async function POST(
   )[0];
 
   if (!sse) {
-    return NextResponse.json(
-      { error: "Exercise not found in session" },
-      { status: 404 },
-    );
+    return NextResponse.json({ error: "Exercise not found in session" }, { status: 404 });
   }
 
   const existing = await db

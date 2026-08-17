@@ -22,9 +22,15 @@ function trendForExercise(
 export function analyseWeek(context: TrainingContext): WeekAnalysis {
   const exerciseAnalyses: Record<number, ExerciseAnalysis> = {};
   for (const exercise of context.exercises) {
-    // Prefer source-week performance; older history supplies context only.
+    // Prefer the exposure from this exercise's own calendar slot; fall back to
+    // the latest source-week exposure (e.g. a moved workout), then to nothing.
     const latestExposure =
-      exercise.recentExposures.find((exposure) => exposure.belongsToSourceWeek) ?? null;
+      exercise.recentExposures.find(
+        (exposure) =>
+          exposure.belongsToSourceWeek && exposure.dayNumber === exercise.dayNumber,
+      ) ??
+      exercise.recentExposures.find((exposure) => exposure.belongsToSourceWeek) ??
+      null;
     const latestSets = latestExposure?.sets ?? [];
     const rpes = latestSets
       .map((set) => set.rpe)

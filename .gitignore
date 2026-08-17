@@ -30,3 +30,6 @@ next-env.d.ts
 *-mcp/*.yml
 .vscode/
 .venv/
+
+# external exercise catalogue snapshots (regenerate via npm run exercises:source)
+/data/external/*.jsonl

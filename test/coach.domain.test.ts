@@ -13,6 +13,7 @@ function context(overrides: Partial<TrainingContext> = {}): TrainingContext {
     plannedSessions: 1,
     completedSessions: 1,
     missedDays: [],
+    sessionOutcomes: [],
     recovery: summariseRecovery([{ sleep: 7, energy: 7, soreness: 3, jointPain: 1, stress: 4, notes: null }]),
     exercises: [{
       sourcePlanExerciseId: 100,
@@ -35,6 +36,7 @@ function context(overrides: Partial<TrainingContext> = {}): TrainingContext {
         completedAt: "2026-08-18T10:00:00.000Z",
         weightKg: 20,
         belongsToSourceWeek: true,
+        dayNumber: 1,
         sets: [{ weightKg: 20, reps: 12, rpe: 6 }, { weightKg: 20, reps: 12, rpe: 6 }],
       }],
     }],

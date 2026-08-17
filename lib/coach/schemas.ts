@@ -11,7 +11,10 @@ function hasNumber(value: unknown): value is number | null {
 /** Runtime guard for JSONB and eventual model/provider output. */
 export function parseWeeklyPlanProposal(value: unknown): WeeklyPlanProposal {
   if (!isRecord(value)) throw new Error("Proposal must be an object.");
-  if (typeof value.sourceWeekId !== "number" || typeof value.proposedWeekNumber !== "number") {
+  if (
+    (typeof value.sourceWeekId !== "number" && value.sourceWeekId !== null) ||
+    typeof value.proposedWeekNumber !== "number"
+  ) {
     throw new Error("Proposal is missing its source or proposed week.");
   }
   if (typeof value.proposedStartsOn !== "string" || !isRecord(value.summary)) {

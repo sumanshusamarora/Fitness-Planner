@@ -3,11 +3,16 @@ import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { exerciseMedia } from "@/db/schema";
 import { extractYoutubeVideoId, youtubeThumbnailUrl } from "@/lib/media";
+import { currentUserOrNull } from "@/lib/session";
 
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const user = await currentUserOrNull();
+  if (!user) {
+    return NextResponse.json({ error: "No profile selected" }, { status: 401 });
+  }
   const { id } = await params;
   const exerciseId = Number(id);
 

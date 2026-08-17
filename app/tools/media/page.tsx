@@ -3,10 +3,12 @@ import Link from "next/link";
 import { MediaEditor } from "@/components/MediaEditor";
 import { db } from "@/db";
 import { exerciseMedia, exercises } from "@/db/schema";
+import { requireCurrentUser } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
 export default async function MediaEditorPage() {
+  await requireCurrentUser();
   const exs = await db
     .select()
     .from(exercises)

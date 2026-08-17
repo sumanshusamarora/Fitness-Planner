@@ -59,9 +59,17 @@ function Icon({ name }: { name: string }) {
 
 export function Nav() {
   const pathname = usePathname();
+
+  const immersive =
+    pathname.startsWith("/workout") ||
+    pathname.startsWith("/recovery") ||
+    pathname.startsWith("/onboarding") ||
+    pathname === "/profile";
+  if (immersive) return null;
+
   return (
     <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-zinc-800 bg-zinc-950/95 backdrop-blur">
-      <div className="mx-auto grid max-w-md grid-cols-4">
+      <div className="mx-auto grid max-w-md grid-cols-4 sm:max-w-lg lg:max-w-xl">
         {items.map((item) => {
           const active =
             item.href === "/"

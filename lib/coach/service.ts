@@ -1,17 +1,20 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { weeklyPlanProposals } from "@/db/schema";
-import { getActivePlan, getSingleUser } from "@/lib/workouts";
+import { getActivePlan } from "@/lib/workouts";
 import { analyseWeek } from "./analyseWeek";
 import { buildTrainingContext } from "./buildTrainingContext";
+import { buildInitialTrainingContext } from "./initialContext";
+import { proposeFirstWeek } from "./proposeFirstWeek";
 import { proposeNextWeek } from "./proposeNextWeek";
 import { parseWeeklyPlanProposal } from "./schemas";
-import { validateProposal } from "./validateProposal";
+import { validateInitialWeekProposal, validateProposal } from "./validateProposal";
 import type { WeeklyPlanProposal } from "./types";
 
 export interface StoredWeeklyPlanProposal {
   id: number;
   status: string;
+  proposalType: "initial_week" | "next_week";
   proposal: WeeklyPlanProposal;
   generatedAt: Date;
 }
@@ -40,6 +43,7 @@ export async function createProposalForPlan(
     return {
       id: existing[0].id,
       status: existing[0].status,
+      proposalType: "next_week",
       proposal: parseWeeklyPlanProposal(existing[0].proposal),
       generatedAt: existing[0].generatedAt,
     };
@@ -49,27 +53,99 @@ export async function createProposalForPlan(
     .values({
       userId,
       sourcePlanId,
+      proposalType: "next_week",
       proposedWeekNumber: proposal.proposedWeekNumber,
       status: proposal.questions.length ? "awaiting_input" : "draft",
       proposal,
     })
     .returning();
-  return { id: record.id, status: record.status, proposal, generatedAt: record.generatedAt };
+  return { id: record.id, status: record.status, proposalType: "next_week", proposal, generatedAt: record.generatedAt };
 }
 
-export async function createProposalForActivePlan(): Promise<StoredWeeklyPlanProposal | null> {
-  const [user, plan] = await Promise.all([getSingleUser(), getActivePlan()]);
-  if (!user || !plan) return null;
-  return createProposalForPlan(user.id, plan.id);
+export async function createProposalForActivePlan(
+  userId: number,
+): Promise<StoredWeeklyPlanProposal | null> {
+  const plan = await getActivePlan(userId);
+  if (!plan) return null;
+  return createProposalForPlan(userId, plan.id);
 }
 
-export async function getProposal(proposalId: number): Promise<StoredWeeklyPlanProposal | null> {
+export async function getProposal(
+  userId: number,
+  proposalId: number,
+): Promise<StoredWeeklyPlanProposal | null> {
   const rows = await db
     .select()
     .from(weeklyPlanProposals)
-    .where(eq(weeklyPlanProposals.id, proposalId))
+    .where(and(eq(weeklyPlanProposals.id, proposalId), eq(weeklyPlanProposals.userId, userId)))
     .limit(1);
   const row = rows[0];
   if (!row) return null;
-  return { id: row.id, status: row.status, proposal: parseWeeklyPlanProposal(row.proposal), generatedAt: row.generatedAt };
+  return {
+    id: row.id,
+    status: row.status,
+    proposalType: row.proposalType as "initial_week" | "next_week",
+    proposal: parseWeeklyPlanProposal(row.proposal),
+    generatedAt: row.generatedAt,
+  };
+}
+
+/** Creates (or regenerates) the draft first-week proposal for a new user. */
+export async function createInitialProposal(
+  userId: number,
+): Promise<StoredWeeklyPlanProposal> {
+  const context = await buildInitialTrainingContext(userId);
+  if (!context) throw new Error("Could not build onboarding context.");
+
+  // Regenerate from the current profile: replace any non-applied drafts so the
+  // reviewed proposal always reflects the latest onboarding answers.
+  await db
+    .delete(weeklyPlanProposals)
+    .where(
+      and(
+        eq(weeklyPlanProposals.userId, userId),
+        eq(weeklyPlanProposals.proposalType, "initial_week"),
+        ne(weeklyPlanProposals.status, "applied"),
+      ),
+    );
+
+  const proposal = validateInitialWeekProposal(await proposeFirstWeek(context));
+  const [record] = await db
+    .insert(weeklyPlanProposals)
+    .values({
+      userId,
+      sourcePlanId: null,
+      proposalType: "initial_week",
+      proposedWeekNumber: proposal.proposedWeekNumber,
+      status: "draft",
+      proposal,
+    })
+    .returning();
+  return { id: record.id, status: record.status, proposalType: "initial_week", proposal, generatedAt: record.generatedAt };
+}
+
+/** Returns the user's draft initial proposal, or null if none exists yet. */
+export async function getDraftInitialProposal(
+  userId: number,
+): Promise<StoredWeeklyPlanProposal | null> {
+  const rows = await db
+    .select()
+    .from(weeklyPlanProposals)
+    .where(
+      and(
+        eq(weeklyPlanProposals.userId, userId),
+        eq(weeklyPlanProposals.proposalType, "initial_week"),
+      ),
+    )
+    .orderBy(desc(weeklyPlanProposals.generatedAt))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    status: row.status,
+    proposalType: "initial_week",
+    proposal: parseWeeklyPlanProposal(row.proposal),
+    generatedAt: row.generatedAt,
+  };
 }

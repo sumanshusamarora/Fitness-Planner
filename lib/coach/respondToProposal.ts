@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { weeklyPlanProposals } from "@/db/schema";
 import { parseWeeklyPlanProposal } from "./schemas";
@@ -6,6 +6,7 @@ import type { WeeklyPlanProposal } from "./types";
 
 /** Records a material answer and turns a blocked recommendation into a conservative hold. */
 export async function respondToProposal(
+  userId: number,
   proposalId: number,
   questionId: string,
   answer: string,
@@ -13,7 +14,7 @@ export async function respondToProposal(
   const rows = await db
     .select()
     .from(weeklyPlanProposals)
-    .where(eq(weeklyPlanProposals.id, proposalId))
+    .where(and(eq(weeklyPlanProposals.id, proposalId), eq(weeklyPlanProposals.userId, userId)))
     .limit(1);
   const record = rows[0];
   if (!record) throw new Error("Proposal not found.");

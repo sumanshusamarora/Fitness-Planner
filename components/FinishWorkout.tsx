@@ -6,7 +6,10 @@ import { useState } from "react";
 interface FinishWorkoutProps {
   sessionId: number;
   title: string;
-  exerciseCount: number;
+  status: string;
+  completedExerciseCount: number;
+  skippedExerciseCount: number;
+  notPerformedCount: number;
   setCount: number;
   durationText: string;
 }
@@ -18,22 +21,19 @@ const EFFORT: { label: string; rpe: number }[] = [
   { label: "Hard", rpe: 8 },
 ];
 
-export function FinishWorkout({
-  sessionId,
-  title,
-  exerciseCount,
-  setCount,
-  durationText,
-}: FinishWorkoutProps) {
+export function FinishWorkout(props: FinishWorkoutProps) {
   const router = useRouter();
   const [step, setStep] = useState<"energy" | "effort">("energy");
   const [energy, setEnergy] = useState<string | null>(null);
   const [effort, setEffort] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
 
+  const isEndedEarly = props.status === "ended_early";
+  const needsFinish = props.status === "in_progress";
+
   async function finish() {
     setSaving(true);
-    await fetch(`/api/sessions/${sessionId}/finish`, {
+    await fetch(`/api/sessions/${props.sessionId}/finish`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ energyRating: energy, overallRpe: effort }),
@@ -45,17 +45,22 @@ export function FinishWorkout({
     <div className="space-y-6">
       <div className="rounded-3xl border border-zinc-800 bg-zinc-900 p-6">
         <p className="text-xs font-semibold uppercase tracking-[0.3em] text-emerald-400">
-          Workout complete
+          {isEndedEarly ? "Workout ended early" : "Workout complete"}
         </p>
-        <h1 className="mt-3 text-3xl font-bold">{title}</h1>
+        <h1 className="mt-3 text-3xl font-bold">{props.title}</h1>
         <div className="mt-4 space-y-2 text-lg">
-          <p className="text-emerald-400">✓ {exerciseCount} exercises</p>
-          <p className="text-emerald-400">✓ {setCount} sets</p>
-          <p className="text-zinc-400">{durationText}</p>
+          <p className="text-emerald-400">✓ {props.completedExerciseCount} exercises completed</p>
+          {props.skippedExerciseCount > 0 && (
+            <p className="text-amber-300">– {props.skippedExerciseCount} skipped</p>
+          )}
+          {props.notPerformedCount > 0 && (
+            <p className="text-zinc-500">{props.notPerformedCount} not performed</p>
+          )}
+          <p className="text-zinc-400">✓ {props.setCount} sets · {props.durationText}</p>
         </div>
       </div>
 
-      {step === "energy" && (
+      {needsFinish && step === "energy" && (
         <div className="rounded-3xl border border-zinc-800 bg-zinc-900 p-6">
           <h2 className="text-2xl font-bold">How was your energy?</h2>
           <div className="mt-5 grid grid-cols-2 gap-3">
@@ -76,7 +81,7 @@ export function FinishWorkout({
         </div>
       )}
 
-      {step === "effort" && (
+      {needsFinish && step === "effort" && (
         <div className="rounded-3xl border border-zinc-800 bg-zinc-900 p-6">
           <h2 className="text-2xl font-bold">Overall effort?</h2>
           <div className="mt-5 grid grid-cols-3 gap-3">
@@ -104,6 +109,16 @@ export function FinishWorkout({
             {saving ? "Saving…" : "FINISH"}
           </button>
         </div>
+      )}
+
+      {!needsFinish && (
+        <button
+          type="button"
+          onClick={() => router.push("/")}
+          className="w-full rounded-2xl bg-emerald-500 py-4 text-lg font-bold text-zinc-950 transition active:scale-[0.98]"
+        >
+          DONE
+        </button>
       )}
     </div>
   );

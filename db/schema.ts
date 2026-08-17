@@ -12,13 +12,47 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 
-export const users = pgTable("users", {
-  id: serial("id").primaryKey(),
-  name: text("name").notNull(),
-  dateOfBirth: date("date_of_birth", { mode: "string" }).notNull(),
-  heightCm: integer("height_cm"),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+export const users = pgTable(
+  "users",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    username: text("username"),
+    usernameNormalized: text("username_normalized"),
+    dateOfBirth: date("date_of_birth", { mode: "string" }),
+    heightCm: integer("height_cm"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex("users_username_normalized_idx").on(table.usernameNormalized)],
+);
+
+/**
+ * Per-user training preferences collected during onboarding. Everything here is
+ * user-scoped and editable later under More → Training profile.
+ */
+export const userTrainingProfiles = pgTable(
+  "user_training_profiles",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id),
+    primaryGoal: text("primary_goal"),
+    secondaryGoals: jsonb("secondary_goals"),
+    experienceLevel: text("experience_level"),
+    yearsSinceTraining: integer("years_since_training"),
+    desiredDaysPerWeek: integer("desired_days_per_week"),
+    preferredDays: jsonb("preferred_days"),
+    sessionMinutes: text("session_minutes"),
+    trainingEnvironment: text("training_environment"),
+    equipmentNotes: text("equipment_notes"),
+    limitationsNotes: text("limitations_notes"),
+    bodyWeightKg: real("body_weight_kg"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex("user_training_profiles_user_id_idx").on(table.userId)],
+);
 
 export const exercises = pgTable(
   "exercises",
@@ -52,9 +86,77 @@ export const exerciseMedia = pgTable(
     attribution: text("attribution"),
     isPrimary: boolean("is_primary").notNull().default(false),
     sortOrder: integer("sort_order").notNull().default(0),
+    provider: text("provider"),
+    providerExternalId: text("provider_external_id"),
+    providerMetadata: jsonb("provider_metadata"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [index("exercise_media_exercise_id_idx").on(table.exerciseId)],
+);
+
+/**
+ * A local, provider-agnostic catalogue of externally sourced exercises. This is
+ * reference/discovery data only — `exercises` remains the canonical workout
+ * model. Rows are populated offline by the import command from a JSONL snapshot
+ * produced by the scraper; the app never talks to the provider at runtime.
+ */
+export const externalExercises = pgTable(
+  "external_exercises",
+  {
+    id: serial("id").primaryKey(),
+    provider: text("provider").notNull(),
+    externalId: text("external_id").notNull(),
+    slug: text("slug"),
+    name: text("name").notNull(),
+    sourceUrl: text("source_url"),
+    primaryMuscles: jsonb("primary_muscles"),
+    secondaryMuscles: jsonb("secondary_muscles"),
+    equipment: jsonb("equipment"),
+    difficulty: text("difficulty"),
+    exerciseType: text("exercise_type"),
+    instructionsSource: text("instructions_source"),
+    rawMetadata: jsonb("raw_metadata"),
+    contentHash: text("content_hash"),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("external_exercises_provider_external_idx").on(
+      table.provider,
+      table.externalId,
+    ),
+    index("external_exercises_name_idx").on(table.name),
+  ],
+);
+
+/**
+ * Maps a canonical exercise to an external catalogue exercise. A mapping is
+ * never authoritative until its status is `approved` (manual confirmation).
+ */
+export const exerciseExternalMappings = pgTable(
+  "exercise_external_mappings",
+  {
+    id: serial("id").primaryKey(),
+    exerciseId: integer("exercise_id")
+      .notNull()
+      .references(() => exercises.id),
+    externalExerciseId: integer("external_exercise_id")
+      .notNull()
+      .references(() => externalExercises.id),
+    provider: text("provider").notNull(),
+    status: text("status").notNull().default("suggested"),
+    matchConfidence: real("match_confidence"),
+    matchMethod: text("match_method"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    rejectedAt: timestamp("rejected_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("exercise_external_mappings_exercise_idx").on(table.exerciseId),
+    index("exercise_external_mappings_external_idx").on(table.externalExerciseId),
+  ],
 );
 
 export const workoutPlans = pgTable(
@@ -84,6 +186,7 @@ export const workoutPlanDays = pgTable(
     dayNumber: integer("day_number").notNull(),
     dayName: text("day_name").notNull(),
     title: text("title").notNull(),
+    origin: text("origin"),
   },
   (table) => [
     index("workout_plan_days_plan_id_idx").on(table.workoutPlanId),
@@ -132,6 +235,8 @@ export const workoutSessions = pgTable(
       .defaultNow()
       .notNull(),
     completedAt: timestamp("completed_at", { withTimezone: true }),
+    status: text("status").notNull().default("in_progress"),
+    endReason: text("end_reason"),
     overallRpe: integer("overall_rpe"),
     energyRating: text("energy_rating"),
     notes: text("notes"),
@@ -156,6 +261,8 @@ export const workoutSessionExercises = pgTable(
     position: integer("position").notNull(),
     suggestedWeightKg: real("suggested_weight_kg"),
     completed: boolean("completed").notNull().default(false),
+    status: text("status").notNull().default("pending"),
+    skipReason: text("skip_reason"),
     notes: text("notes"),
   },
   (table) => [
@@ -221,9 +328,8 @@ export const weeklyPlanProposals = pgTable(
     userId: integer("user_id")
       .notNull()
       .references(() => users.id),
-    sourcePlanId: integer("source_plan_id")
-      .notNull()
-      .references(() => workoutPlans.id),
+    sourcePlanId: integer("source_plan_id").references(() => workoutPlans.id),
+    proposalType: text("proposal_type").notNull().default("next_week"),
     proposedWeekNumber: integer("proposed_week_number").notNull(),
     status: text("status").notNull().default("draft"),
     proposal: jsonb("proposal").notNull(),
@@ -241,5 +347,31 @@ export const weeklyPlanProposals = pgTable(
       table.sourcePlanId,
       table.proposedWeekNumber,
     ),
+  ],
+);
+
+/**
+ * A reviewable intra-week schedule change (move, swap, or rest-day workout).
+ * Like `weekly_plan_proposals`, drafting one must never mutate the plan.
+ */
+export const planAdjustmentProposals = pgTable(
+  "plan_adjustment_proposals",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id),
+    workoutPlanId: integer("workout_plan_id")
+      .notNull()
+      .references(() => workoutPlans.id),
+    type: text("type").notNull(),
+    status: text("status").notNull().default("draft"),
+    proposal: jsonb("proposal").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    appliedAt: timestamp("applied_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("plan_adjustment_proposals_user_id_idx").on(table.userId),
+    index("plan_adjustment_proposals_plan_id_idx").on(table.workoutPlanId),
   ],
 );

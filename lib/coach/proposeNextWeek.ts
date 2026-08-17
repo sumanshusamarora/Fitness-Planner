@@ -12,11 +12,10 @@ import type {
 function actionFor(
   previousWeight: number | null,
   proposedWeight: number | null,
-  reachedMinimumReps: boolean,
 ): ExerciseAction {
   if ((proposedWeight ?? 0) > (previousWeight ?? 0)) return "increase_load";
   if ((proposedWeight ?? 0) < (previousWeight ?? 0)) return "decrease_load";
-  return reachedMinimumReps ? "increase_reps" : "maintain";
+  return "maintain";
 }
 
 function evidenceFor(
@@ -70,7 +69,7 @@ export function proposeNextWeek(
     const blockedForPain = analysis.hasMaterialSafetyFlag;
     const action: ExerciseAction = blockedForPain
       ? "needs_input"
-      : actionFor(previousWeight, proposedWeight, item.reachedMinimumReps);
+      : actionFor(previousWeight, proposedWeight);
     const confidence = blockedForPain
       ? "needs-input"
       : context.recovery.poorRecovery || !item.latestExposure
@@ -122,6 +121,7 @@ export function proposeNextWeek(
   const confidence = questions.length ? "needs-input" : changes.some((change) => change.confidence === "medium") ? "medium" : "high";
 
   return {
+    proposalType: "next_week",
     sourceWeekId: context.sourcePlan.id,
     proposedWeekNumber: context.sourcePlan.weekNumber + 1,
     proposedStartsOn: addDaysToISODate(context.sourcePlan.startsOn, 7),

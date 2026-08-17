@@ -48,9 +48,9 @@ test("proposal persistence never writes the new week until approved, then applie
   assert.equal(before.length, 1, "creating a proposal must not create Week 2");
   assert.equal(before[0].status, "active");
 
-  const first = await applyProposal(stored.id, { confirmation: "approve" });
+  const first = await applyProposal(user.id, stored.id, { confirmation: "approve" });
   fixture.newPlanId = first.planId;
-  const second = await applyProposal(stored.id, { confirmation: "approve" });
+  const second = await applyProposal(user.id, stored.id, { confirmation: "approve" });
   assert.deepEqual(second, first, "reapplying must be idempotent");
   const plans = await db.select().from(workoutPlans).where(eq(workoutPlans.userId, user.id));
   assert.equal(plans.length, 2, "Week 2 should be created exactly once");

@@ -1,25 +1,25 @@
 import Link from "next/link";
 import { formatShortDate } from "@/lib/dates";
+import { requireCurrentUser } from "@/lib/session";
 import { getSessionHistory, getSessionSummary } from "@/lib/workouts";
 
 export const dynamic = "force-dynamic";
 
 export default async function HistoryPage() {
-  const entries = await getSessionHistory();
+  const user = await requireCurrentUser();
+  const entries = await getSessionHistory(user.id);
 
   if (entries.length === 0) {
     return (
       <div className="rounded-3xl border border-zinc-800 bg-zinc-900 p-6">
         <h1 className="text-2xl font-bold">No workouts yet</h1>
-        <p className="mt-2 text-zinc-400">
-          Complete a workout and it will appear here.
-        </p>
+        <p className="mt-2 text-zinc-400">Complete a workout and it will appear here.</p>
       </div>
     );
   }
 
   const summaries = await Promise.all(
-    entries.map((entry) => getSessionSummary(entry.id)),
+    entries.map((entry) => getSessionSummary(user.id, entry.id)),
   );
 
   return (
@@ -40,9 +40,13 @@ export default async function HistoryPage() {
                 </p>
               </div>
               <p className="mt-1 text-sm text-zinc-400">
-                {summary.exerciseCount} exercises · {summary.setCount} sets ·{" "}
-                {summary.durationText}
+                {summary.exerciseCount} exercises · {summary.setCount} sets · {summary.durationText}
               </p>
+              {summary.status !== "completed" && (
+                <p className={`mt-1 text-sm font-semibold ${summary.status === "ended_early" ? "text-amber-400" : "text-zinc-500"}`}>
+                  {summary.status === "ended_early" ? "Ended early" : "Skipped"}
+                </p>
+              )}
             </Link>
           ) : null,
         )}

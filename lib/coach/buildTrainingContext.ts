@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import {
   exercises,
@@ -72,6 +72,8 @@ export async function buildTrainingContext(
             id: workoutSessions.id,
             workoutPlanDayId: workoutSessions.workoutPlanDayId,
             completedAt: workoutSessions.completedAt,
+            status: workoutSessions.status,
+            endReason: workoutSessions.endReason,
           })
           .from(workoutSessions)
           .where(inArray(workoutSessions.workoutPlanDayId, sourceDayIds))
@@ -94,6 +96,7 @@ export async function buildTrainingContext(
           .select({
             exerciseId: workoutSessionExercises.exerciseId,
             sessionId: workoutSessions.id,
+            workoutPlanDayId: workoutSessions.workoutPlanDayId,
             completedAt: workoutSessions.completedAt,
             setNumber: workoutSets.setNumber,
             weightKg: workoutSets.weightKg,
@@ -110,7 +113,7 @@ export async function buildTrainingContext(
             and(
               eq(workoutSessions.userId, userId),
               inArray(workoutSessionExercises.exerciseId, exerciseIds),
-              isNotNull(workoutSessions.completedAt),
+              eq(workoutSessions.status, "completed"),
             ),
           )
           .orderBy(desc(workoutSessions.completedAt), asc(workoutSets.setNumber))
@@ -119,12 +122,17 @@ export async function buildTrainingContext(
   ]);
 
   const sourceSessionIds = new Set(
-    sourceSessions.filter((session) => session.completedAt != null).map((session) => session.id),
+    sourceSessions.filter((session) => session.status === "completed").map((session) => session.id),
   );
   const completedDayIds = new Set(
     sourceSessions
-      .filter((session) => session.completedAt != null)
+      .filter((session) => session.status === "completed")
       .map((session) => session.workoutPlanDayId),
+  );
+  // Map each source plan day to its calendar day number so a repeated exercise
+  // can be evaluated against its own slot rather than the latest exposure.
+  const dayNumberByDayId = new Map<number, number>(
+    plannedRows.map((row) => [row.sourcePlanDayId, row.dayNumber]),
   );
   const exposuresByExercise = new Map<number, ExerciseExposure[]>();
   const exposureMap = new Map<string, ExerciseExposure>();
@@ -138,6 +146,7 @@ export async function buildTrainingContext(
         weightKg: null,
         sets: [],
         belongsToSourceWeek: sourceSessionIds.has(row.sessionId),
+        dayNumber: dayNumberByDayId.get(row.workoutPlanDayId) ?? null,
       };
       exposureMap.set(key, exposure);
       const items = exposuresByExercise.get(row.exerciseId) ?? [];
@@ -161,6 +170,19 @@ export async function buildTrainingContext(
       return { dayNumber: day.dayNumber, dayName: day.dayName, title: day.dayTitle };
     });
 
+  const sessionOutcomes = sourceSessions
+    .filter((session) => session.status !== "in_progress")
+    .map((session) => {
+      const day = plannedRows.find((row) => row.sourcePlanDayId === session.workoutPlanDayId)!;
+      return {
+        dayNumber: day.dayNumber,
+        dayName: day.dayName,
+        title: day.dayTitle,
+        status: session.status,
+        endReason: session.endReason,
+      };
+    });
+
   return {
     user: user[0],
     sourcePlan: plan[0],
@@ -168,6 +190,7 @@ export async function buildTrainingContext(
     plannedSessions: plannedDayIds.size,
     completedSessions: completedDayIds.size,
     missedDays,
+    sessionOutcomes,
     recovery: summariseRecovery(recoveryRows),
   };
 }

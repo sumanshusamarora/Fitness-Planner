@@ -11,8 +11,12 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:seed": "tsx db/seed.ts",
+    "db:seed:test": "tsx db/seed-test.ts",
     "test": "tsx --test test/**/*.test.ts",
-    "coach": "tsx scripts/coach.ts"
+    "coach": "tsx scripts/coach.ts",
+    "exercises:source": "bash -c \"cd scraper && uv sync && .venv/bin/musclewiki --output ../data/external/musclewiki.jsonl --delay 1.0\"",
+    "exercises:import": "tsx scripts/import-exercises.ts",
+    "exercises:match": "tsx scripts/match-exercises.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.7",

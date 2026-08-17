@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { workoutPlanDays, workoutPlans, workoutSessions } from "@/db/schema";
 import { applyProposal } from "@/lib/coach/applyProposal";
@@ -10,11 +10,12 @@ import { getPlanExercises } from "@/lib/workouts";
  * It now requires an existing proposal plus explicit approval.
  */
 export async function generateNextWeek(
+  userId: number,
   proposalId: number,
   decisions: Record<string, ProposalDecision>,
   confirmation: "approve",
 ) {
-  return applyProposal(proposalId, { confirmation, decisions });
+  return applyProposal(userId, proposalId, { confirmation, decisions });
 }
 
 export async function isWeekComplete(plan: { id: number }): Promise<boolean> {
@@ -37,10 +38,13 @@ export async function isWeekComplete(plan: { id: number }): Promise<boolean> {
   return hasResistanceDay;
 }
 
-export async function hasPlanForWeek(weekNumber: number): Promise<boolean> {
+export async function hasPlanForWeek(
+  userId: number,
+  weekNumber: number,
+): Promise<boolean> {
   const rows = await db
     .select()
     .from(workoutPlans)
-    .where(eq(workoutPlans.weekNumber, weekNumber));
+    .where(and(eq(workoutPlans.userId, userId), eq(workoutPlans.weekNumber, weekNumber)));
   return rows.length > 0;
 }

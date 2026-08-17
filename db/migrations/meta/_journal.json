@@ -29,6 +29,27 @@
       "when": 1786945301839,
       "tag": "0003_skinny_kitty_pryde",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786946358771,
+      "tag": "0004_silky_dorian_gray",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786948908789,
+      "tag": "0005_nice_major_mapleleaf",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786949638106,
+      "tag": "0006_woozy_night_thrasher",
+      "breakpoints": true
     }
   ]
 }

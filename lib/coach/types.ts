@@ -27,6 +27,7 @@ export interface ExerciseExposure {
   weightKg: number | null;
   sets: CompletedSet[];
   belongsToSourceWeek: boolean;
+  dayNumber: number | null;
 }
 
 export interface TrainingContextExercise {
@@ -58,8 +59,16 @@ export interface RecoverySummary {
   notes: string[];
 }
 
+export interface SessionOutcome {
+  dayNumber: number;
+  dayName: string;
+  title: string;
+  status: string;
+  endReason: string | null;
+}
+
 export interface TrainingContext {
-  user: { id: number; name: string; dateOfBirth: string; heightCm: number | null };
+  user: { id: number; name: string; dateOfBirth: string | null; heightCm: number | null };
   sourcePlan: {
     id: number;
     weekNumber: number;
@@ -71,6 +80,7 @@ export interface TrainingContext {
   plannedSessions: number;
   completedSessions: number;
   missedDays: { dayNumber: number; dayName: string; title: string }[];
+  sessionOutcomes: SessionOutcome[];
   recovery: RecoverySummary;
 }
 
@@ -141,7 +151,8 @@ export interface ProposedWorkoutDay {
 }
 
 export interface WeeklyPlanProposal {
-  sourceWeekId: number;
+  proposalType: "initial_week" | "next_week";
+  sourceWeekId: number | null;
   proposedWeekNumber: number;
   proposedStartsOn: string;
   summary: {
@@ -159,6 +170,23 @@ export interface WeeklyPlanProposal {
 
 export interface CoachReasoner {
   proposeWeek(context: TrainingContext): Promise<WeeklyPlanProposal>;
+}
+
+export interface InitialTrainingContext {
+  user: { id: number; name: string; dateOfBirth: string | null; heightCm: number | null };
+  profile: {
+    primaryGoal: string | null;
+    secondaryGoals: string[];
+    experienceLevel: string | null;
+    yearsSinceTraining: number | null;
+    desiredDaysPerWeek: number | null;
+    preferredDays: number[];
+    sessionMinutes: string | null;
+    trainingEnvironment: string | null;
+    equipmentNotes: string | null;
+    limitationsNotes: string | null;
+  };
+  recovery: RecoverySummary;
 }
 
 export type ProposalDecision = "accept" | "keep";
