@@ -16,6 +16,7 @@ import { addDaysToISODate, toISODate } from "@/lib/dates";
 import { getLatestRecoverySnapshot } from "@/lib/recovery";
 import { getTrainingProfile } from "@/lib/training-profile";
 import type { RecoverySnapshot } from "@/lib/progression";
+import { buildProgressAnalytics, type ProgressAnalytics } from "@/lib/progress";
 import { parseWeeklyPlanProposal } from "../schemas";
 
 /**
@@ -117,6 +118,8 @@ export interface RollingCoachContext {
   today: RollingTodayState;
   past: PastTrainingSummary;
   future: FutureWindowSummary;
+  /** Longitudinal progress analytics (deterministic), added for the coach. */
+  progress: ProgressAnalytics;
 }
 
 const DAY_NAMES = ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -611,5 +614,6 @@ export async function buildRollingCoachContext(input: {
     today,
     past,
     future,
+    progress: await buildProgressAnalytics({ userId: input.userId, anchorDate }),
   };
 }

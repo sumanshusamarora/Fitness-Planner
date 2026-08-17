@@ -207,6 +207,7 @@ export class OpenAICoachReasoner implements CoachReasoner {
           recoverySummary: analysis.recoverySummary,
           hasMaterialSafetyFlag: analysis.hasMaterialSafetyFlag,
         },
+        progress: context.progress,
         rolling,
       },
     });
@@ -268,6 +269,7 @@ export class OpenAICoachReasoner implements CoachReasoner {
         plan: { weekNumber: base.plan.weekNumber, name: base.plan.name },
         adjacentMuscles: base.adjacentMuscles,
         candidateExercises: base.candidates,
+        progress: rolling.progress,
         past: {
           sessionsCompleted: rolling.past.sessionsCompleted,
           sessionsEndedEarly: rolling.past.sessionsEndedEarly,
@@ -302,6 +304,7 @@ export class OpenAICoachReasoner implements CoachReasoner {
       context: {
         user: { id: userId },
         today: rolling.today,
+        progress: rolling.progress,
         past: {
           sessionsCompleted: rolling.past.sessionsCompleted,
           sessionsEndedEarly: rolling.past.sessionsEndedEarly,

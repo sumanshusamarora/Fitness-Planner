@@ -11,6 +11,7 @@ import {
   workoutSessions,
   workoutSets,
 } from "@/db/schema";
+import { buildProgressAnalytics } from "@/lib/progress";
 import { summariseRecovery } from "./recovery";
 import type {
   CompletedSet,
@@ -192,5 +193,6 @@ export async function buildTrainingContext(
     missedDays,
     sessionOutcomes,
     recovery: summariseRecovery(recoveryRows),
+    progress: await buildProgressAnalytics({ userId }),
   };
 }

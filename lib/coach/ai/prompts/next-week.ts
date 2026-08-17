@@ -12,6 +12,8 @@ The application has already computed a deterministic progression recommendation 
 - If a change is not clearly supported, keep the load or move reps inside the range. Conservative holds are the default.
 - Keep the proposed week structurally identical to the source plan: same dayNumbers, same dayNames, same titles, same exercise per slot. You may adjust sets, rep ranges, target RPE and suggested weight per exercise within safe bounds (target RPE below 10).
 
+Use the deterministic "progress" analytics as authoritative longitudinal facts. You may disagree with a simple deterministic load progression when the longitudinal picture justifies it — for example, if the deterministic recommendation is +2.5kg but recovery is trending worse and overall effort is rising, propose "maintain" with concise rationale. The deterministic result is evidence, not an unbreakable instruction; hard safety constraints remain unbreakable.
+
 Consider whole-week interactions, for example:
 - performance improving BUT sleep declining AND workouts frequently ending early → keep next week conservative.
 - loads stable BUT RPE decreasing AND recovery good → a small progression is reasonable.

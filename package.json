@@ -15,6 +15,7 @@
     "test": "NODE_ENV=test tsx --test test/**/*.test.ts",
     "coach": "tsx scripts/coach.ts",
     "coach:smoke": "tsx scripts/coach-smoke.ts",
+    "progress": "tsx scripts/progress.ts",
     "exercises:source": "bash -c \"cd scraper && uv sync && .venv/bin/musclewiki --output ../data/external/musclewiki.jsonl --delay 1.0\"",
     "exercises:import": "tsx scripts/import-exercises.ts",
     "exercises:match": "tsx scripts/match-exercises.ts"

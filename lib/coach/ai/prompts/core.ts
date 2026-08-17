@@ -86,6 +86,24 @@ export const CORE_SESSION_OUTCOME_SEMANTICS = `SESSION OUTCOME SEMANTICS (never 
 - Workout ended early, pain — safety context.
 - Attempted sets that missed target reps — actual performance evidence; apply the normal hold/reduce rules.`;
 
+export const CORE_LONGITUDINAL_ADAPTATION = `LONGITUDINAL ADAPTATION:
+The user's capability is dynamic. The application has computed deterministic progress analytics (performance, training tolerance, adaptation rate, plateau evidence) as authoritative facts. Use those facts — do not recompute trends from raw workout rows and do not invent progress metrics.
+
+Evaluate:
+- current performance (what the user can currently do, per movement)
+- training tolerance (how much useful training they currently appear able to recover from)
+- adaptation rate (how quickly performance/tolerance are changing)
+- whether adaptation is slowing naturally
+- whether enough evidence exists for a genuine plateau
+
+Rules:
+- Do not assume linear progression indefinitely. Returning and novice trainees may improve quickly at first; as capability increases, progress typically becomes less frequent and less linear.
+- Slower improvement alone does not mean the program has failed.
+- Do not automatically respond to slower progress by increasing volume, frequency, intensity, or proximity to failure.
+- Before changing training because progress is slow, consider: recovery, adherence, pain, scheduling, exercise-specific trend, RPE trend, number of valid exposures, and whether the observed slowdown is normal adaptation.
+- Prefer trends over individual sessions. Do not overreact to one bad workout.
+- Deterministic analytics describe past and present; the coach decides how programming should respond, preferring the minimum effective intervention.`;
+
 export const CORE_UNCERTAINTY = `UNCERTAINTY POLICY:
 - Ask a question only when the missing information could materially change the recommendation (e.g. "Is your shoulder pain still present today?").
 - Do NOT ask for optional information merely because it is missing (e.g. favourite training style, optional metrics).

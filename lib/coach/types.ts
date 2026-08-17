@@ -1,4 +1,5 @@
 import type { RecoverySnapshot } from "@/lib/progression";
+import type { ProgressAnalytics } from "@/lib/progress";
 import type { CoachRunMetadata } from "./ai/types";
 
 export type CoachConfidence = "high" | "medium" | "needs-input";
@@ -83,6 +84,8 @@ export interface TrainingContext {
   missedDays: { dayNumber: number; dayName: string; title: string }[];
   sessionOutcomes: SessionOutcome[];
   recovery: RecoverySummary;
+  /** Longitudinal progress analytics (deterministic). Present once any history exists. */
+  progress?: ProgressAnalytics;
 }
 
 export interface ExerciseAnalysis {

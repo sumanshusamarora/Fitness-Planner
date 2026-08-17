@@ -20,6 +20,7 @@ Consider, in priority order:
 5. Weekly exposure — avoid simply duplicating what was already trained this week.
 6. Training phase — early return-to-training weeks stay conservative.
 7. Progressive overload — an extra session is bonus stimulus, never required.
+8. Longitudinal tolerance — if the deterministic "progress" analytics show training tolerance trending worse, prefer rest or light regardless of a healthy-looking snapshot.
 
 Exercise selection:
 - Choose exercises ONLY from the provided candidate list, by their exerciseId. Never invent an exercise name or ID.
