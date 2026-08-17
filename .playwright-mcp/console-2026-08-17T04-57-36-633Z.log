@@ -1,0 +1,10 @@
+[  814539ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8881/history/4?_rsc=1p-R_iEY6bj0jY31:0
+[  814540ms] [ERROR] Failed to fetch RSC payload for http://localhost:8881/history/4. Falling back to browser navigation. TypeError: Failed to fetch
+    at y (http://localhost:8881/_next/static/chunks/255-87552e6e05b8e3aa.js:1:40384)
+    at async _ (http://localhost:8881/_next/static/chunks/255-87552e6e05b8e3aa.js:1:39242)
+    at async Object.o [as task] (http://localhost:8881/_next/static/chunks/255-87552e6e05b8e3aa.js:1:172750) @ http://localhost:8881/_next/static/chunks/255-87552e6e05b8e3aa.js:0
+[  814585ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8881/week?_rsc=1p-R_iEY6bj0jY31:0
+[  814585ms] [ERROR] Failed to fetch RSC payload for http://localhost:8881/week. Falling back to browser navigation. TypeError: Failed to fetch
+    at y (http://localhost:8881/_next/static/chunks/255-87552e6e05b8e3aa.js:1:40384)
+    at async _ (http://localhost:8881/_next/static/chunks/255-87552e6e05b8e3aa.js:1:39242)
+    at async Object.o [as task] (http://localhost:8881/_next/static/chunks/255-87552e6e05b8e3aa.js:1:172750) @ http://localhost:8881/_next/static/chunks/255-87552e6e05b8e3aa.js:0

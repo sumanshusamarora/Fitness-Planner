@@ -1,0 +1,164 @@
+import type { RecoverySnapshot } from "@/lib/progression";
+
+export type CoachConfidence = "high" | "medium" | "needs-input";
+export type ProposalStatus =
+  | "draft"
+  | "awaiting_input"
+  | "approved"
+  | "rejected"
+  | "applied";
+export type ExerciseAction =
+  | "increase_load"
+  | "decrease_load"
+  | "maintain"
+  | "increase_reps"
+  | "change_sets"
+  | "substitute"
+  | "needs_input";
+
+export interface CompletedSet {
+  weightKg: number;
+  reps: number;
+  rpe: number | null;
+}
+
+export interface ExerciseExposure {
+  completedAt: string;
+  weightKg: number | null;
+  sets: CompletedSet[];
+  belongsToSourceWeek: boolean;
+}
+
+export interface TrainingContextExercise {
+  sourcePlanExerciseId: number;
+  sourcePlanDayId: number;
+  dayNumber: number;
+  dayName: string;
+  dayTitle: string;
+  position: number;
+  exerciseId: number;
+  exerciseName: string;
+  primaryMuscle: string;
+  equipment: string;
+  targetSets: number;
+  minReps: number;
+  maxReps: number;
+  targetRpe: number;
+  suggestedWeightKg: number | null;
+  restSeconds: number;
+  recentExposures: ExerciseExposure[];
+}
+
+export interface RecoverySummary {
+  entries: number;
+  latest: RecoverySnapshot | null;
+  average: RecoverySnapshot | null;
+  poorRecovery: boolean;
+  meaningfulJointPain: boolean;
+  notes: string[];
+}
+
+export interface TrainingContext {
+  user: { id: number; name: string; dateOfBirth: string; heightCm: number | null };
+  sourcePlan: {
+    id: number;
+    weekNumber: number;
+    startsOn: string;
+    name: string;
+    notes: string | null;
+  };
+  exercises: TrainingContextExercise[];
+  plannedSessions: number;
+  completedSessions: number;
+  missedDays: { dayNumber: number; dayName: string; title: string }[];
+  recovery: RecoverySummary;
+}
+
+export interface ExerciseAnalysis {
+  sourcePlanExerciseId: number;
+  latestExposure: ExerciseExposure | null;
+  allSetsCompleted: boolean;
+  reachedTopOfRange: boolean;
+  reachedMinimumReps: boolean;
+  latestRpe: number | null;
+  averageRpe: number | null;
+  trend: "improving" | "stable" | "declining" | "insufficient_data";
+  deterministicWeightKg: number | null;
+  deterministicReason: string;
+}
+
+export interface WeekAnalysis {
+  completedSessions: number;
+  plannedSessions: number;
+  missedSessions: number;
+  recoverySummary: string;
+  hasMaterialSafetyFlag: boolean;
+  exerciseAnalyses: Record<number, ExerciseAnalysis>;
+}
+
+export interface CoachQuestion {
+  id: string;
+  prompt: string;
+  options: string[];
+  exerciseId?: number;
+}
+
+export interface ExerciseChange {
+  sourcePlanExerciseId: number;
+  exerciseId: number;
+  exerciseName: string;
+  previous: {
+    weightKg: number | null;
+    sets: number;
+    minReps: number;
+    maxReps: number;
+    targetRpe: number;
+  };
+  proposed: {
+    weightKg: number | null;
+    sets: number;
+    minReps: number;
+    maxReps: number;
+    targetRpe: number;
+  };
+  action: ExerciseAction;
+  confidence: CoachConfidence;
+  reason: string;
+  evidence: string[];
+}
+
+export interface ProposedWorkoutExercise extends ExerciseChange {
+  position: number;
+  restSeconds: number;
+}
+
+export interface ProposedWorkoutDay {
+  sourcePlanDayId: number;
+  dayNumber: number;
+  dayName: string;
+  title: string;
+  exercises: ProposedWorkoutExercise[];
+}
+
+export interface WeeklyPlanProposal {
+  sourceWeekId: number;
+  proposedWeekNumber: number;
+  proposedStartsOn: string;
+  summary: {
+    completedSessions: number;
+    plannedSessions: number;
+    recoverySummary: string;
+    overallRecommendation: string;
+  };
+  changes: ExerciseChange[];
+  days: ProposedWorkoutDay[];
+  questions: CoachQuestion[];
+  confidence: CoachConfidence;
+  methodologyVersion: "local-deterministic-v1";
+}
+
+export interface CoachReasoner {
+  proposeWeek(context: TrainingContext): Promise<WeeklyPlanProposal>;
+}
+
+export type ProposalDecision = "accept" | "keep";

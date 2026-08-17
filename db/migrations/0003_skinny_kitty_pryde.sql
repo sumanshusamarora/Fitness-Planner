@@ -1,0 +1,1 @@
+ALTER TABLE "weekly_plan_proposals" ADD COLUMN "input_responses" jsonb;
