@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { FinishWorkout } from "@/components/FinishWorkout";
 import { requireCurrentUser } from "@/lib/session";
 import { getSessionSummary } from "@/lib/workouts";
+import { buildSessionActivitySummary } from "@/lib/session-activities";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +13,11 @@ export default async function CompletePage({
 }) {
   const user = await requireCurrentUser();
   const { id } = await params;
-  const summary = await getSessionSummary(user.id, Number(id));
+  const sessionId = Number(id);
+  const [summary, activities] = await Promise.all([
+    getSessionSummary(user.id, sessionId),
+    buildSessionActivitySummary(user.id, sessionId).catch(() => null),
+  ]);
 
   if (!summary) notFound();
 
@@ -30,6 +35,7 @@ export default async function CompletePage({
       }
       setCount={summary.setCount}
       durationText={summary.durationText}
+      activities={activities}
     />
   );
 }

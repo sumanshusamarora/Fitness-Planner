@@ -17,6 +17,7 @@ import { getLatestRecoverySnapshot } from "@/lib/recovery";
 import { getTrainingProfile } from "@/lib/training-profile";
 import type { RecoverySnapshot } from "@/lib/progression";
 import { buildProgressAnalytics, type ProgressAnalytics } from "@/lib/progress";
+import { buildRecentActualSummary, type RecentActualSummary } from "@/lib/session-activities";
 import { parseWeeklyPlanProposal } from "../schemas";
 
 /**
@@ -120,6 +121,8 @@ export interface RollingCoachContext {
   future: FutureWindowSummary;
   /** Longitudinal progress analytics (deterministic), added for the coach. */
   progress: ProgressAnalytics;
+  /** Compact "what actually happened" facts (warm-up/cardio/mobility/added sets/replacements). */
+  actual: RecentActualSummary;
 }
 
 const DAY_NAMES = ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -407,6 +410,7 @@ export async function buildRollingCoachContext(input: {
         and(
           eq(workoutSessions.userId, input.userId),
           eq(workoutSessions.status, "completed"),
+          eq(workoutSets.setType, "working"),
           gte(workoutSessions.completedAt, new Date(`${windowStartISO}T00:00:00Z`)),
           lte(workoutSessions.completedAt, new Date(`${anchorDateISO}T23:59:59.999Z`)),
         ),
@@ -615,5 +619,6 @@ export async function buildRollingCoachContext(input: {
     past,
     future,
     progress: await buildProgressAnalytics({ userId: input.userId, anchorDate }),
+    actual: await buildRecentActualSummary(input.userId),
   };
 }

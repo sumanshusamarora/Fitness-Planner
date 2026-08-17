@@ -12,14 +12,16 @@ interface LoggedSet {
   weightKg: number;
   reps: number;
   rpe: number | null;
+  setType: string;
 }
 
-type ExerciseStatus = "pending" | "completed" | "skipped" | "not_attempted";
+type ExerciseStatus = "pending" | "completed" | "skipped" | "not_attempted" | "replaced";
 
 interface Exercise {
   sessionExerciseId: number;
   exerciseId: number;
   name: string;
+  measurementType: string;
   position: number;
   targetSets: number;
   minReps: number;
@@ -40,6 +42,8 @@ interface Exercise {
   } | null;
   loggedSets: LoggedSet[];
   status: ExerciseStatus;
+  origin: "planned" | "added" | "replacement";
+  replacementReason: string | null;
   skipReason: string | null;
 }
 
@@ -105,6 +109,14 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
   const [skipOpen, setSkipOpen] = useState(false);
   const [endEarlyOpen, setEndEarlyOpen] = useState(false);
   const [finishOpen, setFinishOpen] = useState(false);
+  const [warmup, setWarmup] = useState(false);
+  const [addActivityOpen, setAddActivityOpen] = useState(false);
+  const [replaceOpen, setReplaceOpen] = useState(false);
+  const [activityKind, setActivityKind] = useState<"warmup" | "cardio" | "mobility" | "cooldown" | null>(null);
+  const [activityMinutes, setActivityMinutes] = useState(10);
+  const [replaceReason, setReplaceReason] = useState<string | null>(null);
+  const [replaceQuery, setReplaceQuery] = useState("");
+  const [replaceResults, setReplaceResults] = useState<{ id: number; name: string; primaryMuscle: string }[]>([]);
 
   const exercisesRef = useRef(exercises);
   const indexRef = useRef(index);
@@ -117,7 +129,8 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
     if (phase !== "rest") return;
     if (restLeft <= 0) {
       const ex = exercisesRef.current[indexRef.current];
-      setPhase(ex.loggedSets.length < ex.targetSets ? "setup" : "done");
+      const workingCount = ex.loggedSets.filter((s) => s.setType === "working").length;
+      setPhase(workingCount < ex.targetSets ? "setup" : "done");
       return;
     }
     const t = setTimeout(() => setRestLeft((s) => s - 1), 1000);
@@ -129,7 +142,11 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
   }
 
   const ex = exercises[index];
-  const draft = drafts[ex.exerciseId] ?? { weight: 0, reps: ex.maxReps };
+  const draft = drafts[ex.exerciseId] ?? { weight: ex.suggestedWeightKg ?? ex.lastTime?.weightKg ?? 0, reps: ex.maxReps };
+  const measurement = ex.measurementType;
+  const isWeighted = measurement === "weighted_reps";
+  const isTimed = measurement === "timed_hold";
+  const workingCount = ex.loggedSets.filter((s) => s.setType === "working").length;
   const setNumber = ex.loggedSets.length + 1;
   const weightStep = smallestIncrement(draft.weight) || 2.5;
   const allDone = exercises.every((e) => e.status !== "pending");
@@ -164,24 +181,27 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
     setSaving(true);
     setError(null);
     try {
+      const setType = warmup ? "warmup" : "working";
       const res = await fetch(`/api/sessions/${sessionId}/sets`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           exerciseId: ex.exerciseId,
-          weightKg: draft.weight,
+          weightKg: isWeighted ? draft.weight : 0,
           reps: draft.reps,
           rpe,
+          setType,
         }),
       });
       if (!res.ok) throw new Error("save failed");
 
-      const isLastSet = ex.loggedSets.length + 1 >= ex.targetSets;
+      const isLastSet = !warmup && workingCount + 1 >= ex.targetSets;
       const newSet: LoggedSet = {
         setNumber: ex.loggedSets.length + 1,
-        weightKg: draft.weight,
+        weightKg: isWeighted ? draft.weight : 0,
         reps: draft.reps,
         rpe,
+        setType,
       };
       setExercises((prev) =>
         prev.map((e, i) =>
@@ -201,6 +221,7 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
         });
       }
 
+      setWarmup(false);
       setRestLeft(ex.restSeconds);
       setPhase("rest");
     } catch {
@@ -228,6 +249,52 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
       );
       const np = nextPending(index);
       if (np !== -1) goTo(np);
+    }
+  }
+
+  async function addActivity() {
+    if (!activityKind) return;
+    const type = activityKind === "mobility" ? "mobility" : activityKind === "cooldown" ? "stretching" : "cardio";
+    const role = activityKind === "warmup" ? "warmup" : activityKind === "cooldown" ? "cooldown" : activityKind === "mobility" ? "mobility" : "cardio";
+    setSaving(true);
+    await fetch(`/api/sessions/${sessionId}/activities`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        activityType: type,
+        activityRole: role,
+        nameSnapshot: activityKind === "warmup" ? "Treadmill" : activityKind === "cardio" ? "Cardio" : activityKind === "mobility" ? "Mobility" : "Cool-down",
+        durationSeconds: activityMinutes * 60,
+        effortRpe: null,
+      }),
+    });
+    setSaving(false);
+    setAddActivityOpen(false);
+    setActivityKind(null);
+    setActivityMinutes(10);
+  }
+
+  async function searchReplace(query: string) {
+    const res = await fetch(`/api/exercises/search?q=${encodeURIComponent(query)}`);
+    const data = await res.json();
+    setReplaceResults(data.exercises ?? []);
+  }
+
+  async function doReplace(replacementExerciseId: number) {
+    setSaving(true);
+    const res = await fetch(`/api/sessions/${sessionId}/exercises/${ex.exerciseId}/replace`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ replacementExerciseId, reason: replaceReason ?? "other" }),
+    });
+    setSaving(false);
+    if (res.ok) {
+      setReplaceOpen(false);
+      setReplaceReason(null);
+      setReplaceQuery("");
+      router.refresh();
+    } else {
+      setError("Could not replace this exercise.");
     }
   }
 
@@ -374,27 +441,48 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
               Set {setNumber} of {ex.targetSets}
             </p>
             <div className="space-y-4">
+              {isWeighted && (
+                <Stepper
+                  label="Weight"
+                  value={draft.weight}
+                  step={weightStep}
+                  unit="kg"
+                  format={formatWeight}
+                  onChange={(v) => updateDraft({ weight: v })}
+                />
+              )}
+              {!isWeighted && !isTimed && (
+                <p className="rounded-2xl bg-zinc-800/60 p-3 text-sm text-zinc-400">
+                  Bodyweight — no external load needed.
+                </p>
+              )}
+              {isTimed && (
+                <p className="rounded-2xl bg-zinc-800/60 p-3 text-sm text-zinc-400">
+                  Timed hold — record seconds.
+                </p>
+              )}
               <Stepper
-                label="Weight"
-                value={draft.weight}
-                step={weightStep}
-                unit="kg"
-                format={formatWeight}
-                onChange={(v) => updateDraft({ weight: v })}
-              />
-              <Stepper
-                label="Reps"
+                label={isTimed ? "Seconds" : "Reps"}
                 value={draft.reps}
-                step={1}
-                unit="reps"
+                step={isTimed ? 5 : 1}
+                unit={isTimed ? "sec" : "reps"}
                 onChange={(v) => updateDraft({ reps: v })}
               />
+              <label className="flex items-center gap-3 rounded-2xl bg-zinc-800/60 p-3 text-sm text-zinc-300">
+                <input
+                  type="checkbox"
+                  checked={warmup}
+                  onChange={(e) => setWarmup(e.target.checked)}
+                  className="h-5 w-5 accent-emerald-500"
+                />
+                Mark this set as warm-up
+              </label>
             </div>
             {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
             <button
               type="button"
               onClick={() => setPhase("rpe")}
-              disabled={saving || draft.weight <= 0 || draft.reps <= 0}
+              disabled={saving || draft.reps <= 0 || (isWeighted && draft.weight <= 0)}
               className="mt-6 w-full rounded-2xl bg-emerald-500 py-4 text-lg font-bold text-zinc-950 transition active:scale-[0.98] disabled:opacity-60"
             >
               COMPLETE SET
@@ -410,7 +498,8 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
           </p>
           <h2 className="mt-2 text-3xl font-bold">How hard was that set?</h2>
           <p className="mt-1 text-zinc-400">
-            {formatWeight(draft.weight)} kg × {draft.reps} reps
+            {isWeighted ? `${formatWeight(draft.weight)} kg × ${draft.reps} reps` : isTimed ? `${draft.reps} seconds` : `${draft.reps} reps`}
+            {warmup && " · warm-up"}
           </p>
           <div className="mt-6 grid grid-cols-3 gap-3">
             {RPE_OPTIONS.map((rpe) => (
@@ -557,6 +646,12 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
             <SheetButton onClick={() => { setMenuOpen(false); setListOpen(true); }}>
               Exercise list
             </SheetButton>
+            <SheetButton onClick={() => { setMenuOpen(false); setAddActivityOpen(true); }}>
+              Add activity
+            </SheetButton>
+            <SheetButton onClick={() => { setMenuOpen(false); setReplaceOpen(true); }}>
+              Replace exercise
+            </SheetButton>
             <SheetButton onClick={() => { setMenuOpen(false); setSkipOpen(true); }}>
               Skip exercise
             </SheetButton>
@@ -623,6 +718,81 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
             </SheetButton>
             <SheetButton onClick={() => setFinishOpen(false)}>GO BACK</SheetButton>
           </div>
+        </Overlay>
+      )}
+
+      {addActivityOpen && (
+        <Overlay onClose={() => setAddActivityOpen(false)}>
+          <h2 className="mb-3 text-2xl font-bold">Add activity</h2>
+          {!activityKind ? (
+            <div className="space-y-2">
+              {[
+                { key: "warmup", label: "Warm-up" },
+                { key: "cardio", label: "Cardio" },
+                { key: "mobility", label: "Mobility / Stretching" },
+                { key: "cooldown", label: "Cool-down" },
+              ].map((option) => (
+                <SheetButton key={option.key} onClick={() => setActivityKind(option.key as never)}>
+                  {option.label}
+                </SheetButton>
+              ))}
+              <CloseRow onClose={() => setAddActivityOpen(false)} />
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <p className="text-lg font-semibold capitalize">{activityKind}</p>
+              <div className="flex items-center justify-center gap-6">
+                <button type="button" onClick={() => setActivityMinutes((m) => Math.max(1, m - 5))} className="h-14 w-14 rounded-2xl bg-zinc-800 text-2xl font-bold">−</button>
+                <p className="text-4xl font-bold tabular-nums">{activityMinutes} min</p>
+                <button type="button" onClick={() => setActivityMinutes((m) => m + 5)} className="h-14 w-14 rounded-2xl bg-zinc-800 text-2xl font-bold">+</button>
+              </div>
+              <SheetButton primary onClick={addActivity}>ADD</SheetButton>
+              <CloseRow onClose={() => { setAddActivityOpen(false); setActivityKind(null); }} />
+            </div>
+          )}
+        </Overlay>
+      )}
+
+      {replaceOpen && (
+        <Overlay onClose={() => setReplaceOpen(false)}>
+          <h2 className="mb-3 text-2xl font-bold">Replace {ex.name}</h2>
+          {!replaceReason ? (
+            <div className="space-y-2">
+              <p className="mb-2 text-sm text-zinc-400">Why replace it?</p>
+              {[
+                { key: "equipment_busy", label: "Equipment busy" },
+                { key: "equipment_unavailable", label: "Equipment unavailable" },
+                { key: "pain_discomfort", label: "Pain / discomfort" },
+                { key: "preference", label: "Prefer something else" },
+                { key: "other", label: "Other" },
+              ].map((r) => (
+                <SheetButton key={r.key} onClick={() => setReplaceReason(r.key)}>
+                  {r.label}
+                </SheetButton>
+              ))}
+              <CloseRow onClose={() => setReplaceOpen(false)} />
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex gap-2">
+                <input
+                  value={replaceQuery}
+                  onChange={(e) => { setReplaceQuery(e.target.value); searchReplace(e.target.value); }}
+                  placeholder="Search exercises"
+                  className="flex-1 rounded-2xl border border-zinc-700 bg-zinc-800 p-3 text-zinc-100"
+                />
+              </div>
+              <div className="max-h-72 space-y-2 overflow-y-auto">
+                {replaceResults.map((r) => (
+                  <button key={r.id} type="button" onClick={() => doReplace(r.id)} className="flex w-full items-center justify-between rounded-2xl bg-zinc-800 px-4 py-3 text-left">
+                    <span className="font-semibold text-zinc-100">{r.name}</span>
+                    <span className="text-sm text-zinc-400">{r.primaryMuscle}</span>
+                  </button>
+                ))}
+              </div>
+              <CloseRow onClose={() => { setReplaceOpen(false); setReplaceReason(null); }} />
+            </div>
+          )}
         </Overlay>
       )}
     </div>

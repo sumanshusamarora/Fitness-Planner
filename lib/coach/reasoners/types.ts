@@ -7,6 +7,7 @@ import type {
 } from "../ai/schemas";
 import type { RollingCoachContext } from "../ai/context";
 import type { CoachRunMetadata } from "../ai/types";
+import type { WeekRebuildContext, WeekRebuildProposal } from "@/lib/week-rebuild/types";
 
 export type Effort = "light" | "usual" | "heavy";
 
@@ -48,6 +49,7 @@ export interface CoachReasoner {
   reviewRecovery(userId: number): Promise<RecoveryCoachDecision>;
   proposeSubstitution(input: SubstitutionReasonerInput): Promise<SubstitutionCoachDecision>;
   reviewNutrition(input: NutritionReviewInput): Promise<NutritionCoachDecision>;
+  proposeWeekRebuild(context: WeekRebuildContext): Promise<WeekRebuildProposal>;
 }
 
 /** Deterministic fallback library — mirrors the reasoner methods without AI. */
@@ -67,5 +69,9 @@ export const deterministicCoach = {
   analyseExtraSession: async (context: RollingCoachContext, requestedEffort: Effort) => {
     const { analyseExtraSessionFromRolling } = await import("../restDay");
     return analyseExtraSessionFromRolling(context, requestedEffort);
+  },
+  proposeWeekRebuild: async (context: WeekRebuildContext): Promise<WeekRebuildProposal> => {
+    const { proposeWeekRebuildDeterministic } = await import("@/lib/week-rebuild/deterministic");
+    return proposeWeekRebuildDeterministic(context);
   },
 };

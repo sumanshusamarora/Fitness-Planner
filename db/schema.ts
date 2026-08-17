@@ -11,6 +11,7 @@ import {
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 export const users = pgTable(
   "users",
@@ -62,6 +63,7 @@ export const exercises = pgTable(
     category: text("category").notNull(),
     primaryMuscle: text("primary_muscle").notNull(),
     equipment: text("equipment").notNull(),
+    measurementType: text("measurement_type"),
     instructions: text("instructions"),
     videoUrl: text("video_url"),
     active: boolean("active").notNull().default(true),
@@ -245,9 +247,21 @@ export const workoutSessions = pgTable(
     index("workout_sessions_user_id_idx").on(table.userId),
     index("workout_sessions_plan_day_id_idx").on(table.workoutPlanDayId),
     index("workout_sessions_started_at_idx").on(table.startedAt),
+    // One active session per plan day. A day can never have two in-progress
+    // sessions, so concurrent/double-tap Start is impossible at the DB level.
+    uniqueIndex("workout_sessions_active_session_day_idx")
+      .on(table.workoutPlanDayId)
+      .where(sql`${table.status} = 'in_progress'`),
   ],
 );
 
+/**
+ * An actual resistance movement inside a workout session. `origin` records why
+ * the movement exists (planned / added spontaneously / a replacement), while
+ * `replaces_session_exercise_id` links a replacement back to the original
+ * planned entry it substituted. The original planned entry is preserved with
+ * status "replaced" — never deleted and never marked failed.
+ */
 export const workoutSessionExercises = pgTable(
   "workout_session_exercises",
   {
@@ -263,6 +277,9 @@ export const workoutSessionExercises = pgTable(
     completed: boolean("completed").notNull().default(false),
     status: text("status").notNull().default("pending"),
     skipReason: text("skip_reason"),
+    origin: text("origin").notNull().default("planned"),
+    replacementReason: text("replacement_reason"),
+    replacesSessionExerciseId: integer("replaces_session_exercise_id"),
     notes: text("notes"),
   },
   (table) => [
@@ -281,6 +298,7 @@ export const workoutSets = pgTable(
     weightKg: real("weight_kg").notNull(),
     reps: integer("reps").notNull(),
     rpe: integer("rpe"),
+    setType: text("set_type").notNull().default("working"),
     completedAt: timestamp("completed_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -289,6 +307,48 @@ export const workoutSets = pgTable(
     index("workout_sets_session_exercise_id_idx").on(
       table.workoutSessionExerciseId,
     ),
+  ],
+);
+
+/**
+ * A non-set-based actual activity inside a workout session (cardio, mobility,
+ * stretching, generic warm-up/cool-down). These are factual "what actually
+ * happened" records, kept separate from the set-based resistance model so a
+ * treadmill warm-up is never modelled as "3 × 10".
+ */
+export const workoutSessionActivities = pgTable(
+  "workout_session_activities",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id),
+    workoutSessionId: integer("workout_session_id")
+      .notNull()
+      .references(() => workoutSessions.id),
+    activityType: text("activity_type").notNull(),
+    activityRole: text("activity_role").notNull(),
+    exerciseId: integer("exercise_id").references(() => exercises.id),
+    nameSnapshot: text("name_snapshot"),
+    durationSeconds: integer("duration_seconds"),
+    distanceMeters: real("distance_meters"),
+    speed: real("speed"),
+    inclinePercent: real("incline_percent"),
+    effortRpe: integer("effort_rpe"),
+    notes: text("notes"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("workout_session_activities_session_id_idx").on(
+      table.workoutSessionId,
+    ),
+    index("workout_session_activities_user_id_idx").on(table.userId),
   ],
 );
 
@@ -351,8 +411,36 @@ export const weeklyPlanProposals = pgTable(
 );
 
 /**
- * A reviewable intra-week schedule change (move, swap, or rest-day workout).
- * Like `weekly_plan_proposals`, drafting one must never mutate the plan.
+ * Structured week feedback a user submits when asking to adjust/rebuild their
+ * current week. Stored as first-class data (not just prompt logs) so it becomes
+ * longitudinal coaching context and audit history.
+ */
+export const weekFeedback = pgTable(
+  "week_feedback",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id),
+    workoutPlanId: integer("workout_plan_id")
+      .notNull()
+      .references(() => workoutPlans.id),
+    primaryReason: text("primary_reason").notNull(),
+    secondaryReasons: jsonb("secondary_reasons"),
+    structuredDetails: jsonb("structured_details"),
+    freeText: text("free_text"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("week_feedback_user_id_idx").on(table.userId),
+    index("week_feedback_plan_id_idx").on(table.workoutPlanId),
+  ],
+);
+
+/**
+ * A reviewable intra-week schedule change (move, swap, rest-day workout, or
+ * full week rebuild). Like `weekly_plan_proposals`, drafting one must never
+ * mutate the plan. `state_hash` guards against applying a stale proposal.
  */
 export const planAdjustmentProposals = pgTable(
   "plan_adjustment_proposals",
@@ -367,6 +455,9 @@ export const planAdjustmentProposals = pgTable(
     type: text("type").notNull(),
     status: text("status").notNull().default("draft"),
     proposal: jsonb("proposal").notNull(),
+    feedbackId: integer("feedback_id").references(() => weekFeedback.id),
+    stateHash: text("state_hash"),
+    inputResponses: jsonb("input_responses"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     appliedAt: timestamp("applied_at", { withTimezone: true }),
   },

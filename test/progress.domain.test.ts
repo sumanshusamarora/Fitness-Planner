@@ -18,8 +18,8 @@ import type {
   SessionRecord,
 } from "@/lib/progress";
 
-const chest: ExerciseMeta = { exerciseId: 1, name: "Machine Chest Press", equipment: "Machine", category: "strength", primaryMuscle: "Chest" };
-const plank: ExerciseMeta = { exerciseId: 2, name: "Plank", equipment: "Bodyweight", category: "core", primaryMuscle: "Core" };
+const chest: ExerciseMeta = { exerciseId: 1, name: "Machine Chest Press", equipment: "Machine", category: "strength", primaryMuscle: "Chest", measurementType: null };
+const plank: ExerciseMeta = { exerciseId: 2, name: "Plank", equipment: "Bodyweight", category: "core", primaryMuscle: "Core", measurementType: null };
 
 function exp(sessionId: number, dateISO: string, sets: { weightKg: number; reps: number; rpe: number | null }[]): ExerciseExposure {
   return { sessionId, completedAt: dateISO, outcome: "attempted", skipReason: null, sets };

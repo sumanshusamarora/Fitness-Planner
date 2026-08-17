@@ -5,7 +5,9 @@ import {
   COACH_PROMPT_VERSION,
   CORE_AUTHORITATIVE_DATA,
   CORE_LONGITUDINAL_ADAPTATION,
+  CORE_MEASUREMENT_SEMANTICS,
   CORE_OUTPUT_CONTRACT,
+  CORE_PLAN_VS_ACTUAL,
   CORE_ROLE,
   CORE_SESSION_OUTCOME_SEMANTICS,
   CORE_TRAINING_PRINCIPLES,
@@ -18,6 +20,7 @@ import { MODE_NEXT_WEEK } from "./prompts/next-week";
 import { MODE_NUTRITION } from "./prompts/nutrition";
 import { MODE_RECOVERY } from "./prompts/recovery";
 import { MODE_SUBSTITUTION } from "./prompts/substitution";
+import { MODE_WEEK_REBUILD } from "./prompts/week-rebuild";
 import type { CoachMode, CoachReasoningEffort, CoachRunMetadata } from "./types";
 
 const MODE_INSTRUCTIONS: Record<CoachMode, string> = {
@@ -27,6 +30,7 @@ const MODE_INSTRUCTIONS: Record<CoachMode, string> = {
   recovery_review: MODE_RECOVERY,
   exercise_substitution: MODE_SUBSTITUTION,
   nutrition_review: MODE_NUTRITION,
+  week_rebuild: MODE_WEEK_REBUILD,
 };
 
 /** Larger planning decisions use more reasoning; small ones stay light. */
@@ -37,6 +41,7 @@ export const REASONING_EFFORT: Record<CoachMode, CoachReasoningEffort> = {
   recovery_review: "medium",
   exercise_substitution: "low",
   nutrition_review: "medium",
+  week_rebuild: "high",
 };
 
 export interface CoachPrompt {
@@ -57,6 +62,8 @@ export function buildCoachPrompt(
     CORE_TRAINING_PRINCIPLES,
     CORE_SESSION_OUTCOME_SEMANTICS,
     CORE_LONGITUDINAL_ADAPTATION,
+    CORE_PLAN_VS_ACTUAL,
+    CORE_MEASUREMENT_SEMANTICS,
     MODE_INSTRUCTIONS[mode],
     CORE_UNCERTAINTY,
     CORE_OUTPUT_CONTRACT,

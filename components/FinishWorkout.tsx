@@ -3,6 +3,17 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+interface ActivitySummary {
+  warmupMinutes: number;
+  cardioMinutes: number;
+  mobilityMinutes: number;
+  cooldownMinutes: number;
+  addedExercises: number;
+  replacedExercises: number;
+  extraWorkingSets: number;
+  workingResistanceSets: number;
+}
+
 interface FinishWorkoutProps {
   sessionId: number;
   title: string;
@@ -12,6 +23,7 @@ interface FinishWorkoutProps {
   notPerformedCount: number;
   setCount: number;
   durationText: string;
+  activities?: ActivitySummary | null;
 }
 
 const ENERGY = ["Very Low", "Low", "Good", "Great"];
@@ -58,6 +70,17 @@ export function FinishWorkout(props: FinishWorkoutProps) {
           )}
           <p className="text-zinc-400">✓ {props.setCount} sets · {props.durationText}</p>
         </div>
+        {props.activities && (
+          <div className="mt-4 space-y-1 text-sm text-zinc-400">
+            {props.activities.warmupMinutes > 0 && <p>Warm-up · {props.activities.warmupMinutes} min</p>}
+            {props.activities.cardioMinutes > 0 && <p>Cardio · {props.activities.cardioMinutes} min</p>}
+            {props.activities.mobilityMinutes > 0 && <p>Mobility / stretching · {props.activities.mobilityMinutes} min</p>}
+            {props.activities.cooldownMinutes > 0 && <p>Cool-down · {props.activities.cooldownMinutes} min</p>}
+            {props.activities.addedExercises > 0 && <p className="text-sky-400">+{props.activities.addedExercises} added exercise{props.activities.addedExercises > 1 ? "s" : ""}</p>}
+            {props.activities.replacedExercises > 0 && <p className="text-violet-400">{props.activities.replacedExercises} replaced</p>}
+            <p className="text-zinc-500">{props.activities.workingResistanceSets} working sets</p>
+          </div>
+        )}
       </div>
 
       {needsFinish && step === "energy" && (

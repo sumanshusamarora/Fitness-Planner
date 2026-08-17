@@ -1,3 +1,4 @@
+import { measurementTypeFor } from "@/lib/exercise-measurement";
 import type { ExerciseMeta, ExposureSet } from "./types";
 
 /**
@@ -31,13 +32,9 @@ export function estimateExposureCapacity(sets: ExposureSet[]): number | null {
 
 /**
  * Whether a movement carries meaningful external load, i.e. whether an
- * estimated 1RM is appropriate. Bodyweight-only holds and cardio are excluded.
+ * estimated 1RM is appropriate. Bodyweight reps, timed holds (planks), cardio
+ * and duration-based movements are excluded.
  */
-export function isWeightedResistance(exercise: Pick<ExerciseMeta, "equipment" | "category" | "primaryMuscle">): boolean {
-  const category = exercise.category?.toLowerCase() ?? "";
-  const muscle = exercise.primaryMuscle?.toLowerCase() ?? "";
-  const equipment = exercise.equipment?.toLowerCase() ?? "";
-  if (category === "cardio" || muscle === "cardiovascular") return false;
-  if (equipment === "bodyweight" || equipment === "") return false;
-  return true;
+export function isWeightedResistance(exercise: Pick<ExerciseMeta, "equipment" | "category" | "primaryMuscle" | "name" | "measurementType">): boolean {
+  return measurementTypeFor(exercise) === "weighted_reps";
 }

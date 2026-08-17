@@ -219,7 +219,7 @@ export async function buildProgressAnalytics(input: {
           eq(workoutSets.workoutSessionExerciseId, workoutSessionExercises.id),
         )
         .innerJoin(workoutSessions, eq(workoutSessionExercises.workoutSessionId, workoutSessions.id))
-        .where(inArray(workoutSets.workoutSessionExerciseId, sessionExerciseIds))
+        .where(and(inArray(workoutSets.workoutSessionExerciseId, sessionExerciseIds), eq(workoutSets.setType, "working")))
         .orderBy(asc(workoutSessions.completedAt), asc(workoutSets.setNumber))
     : [];
 
@@ -232,6 +232,7 @@ export async function buildProgressAnalytics(input: {
           equipment: exercises.equipment,
           category: exercises.category,
           primaryMuscle: exercises.primaryMuscle,
+          measurementType: exercises.measurementType,
         })
         .from(exercises)
         .where(inArray(exercises.id, exerciseIds))

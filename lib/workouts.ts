@@ -6,11 +6,13 @@ import {
   workoutPlanDays,
   workoutPlanExercises,
   workoutPlans,
+  workoutSessionActivities,
   workoutSessionExercises,
   workoutSessions,
   workoutSets,
 } from "../db/schema";
 import { formatDuration } from "./dates";
+import { measurementTypeFor } from "./exercise-measurement";
 import { getApprovedExternalReferences } from "./external-exercises";
 import { sanitizeInstructionsHtml } from "./external-exercises/sanitize";
 import { extractYoutubeVideoId } from "./media";
@@ -25,6 +27,9 @@ export interface PlanExercise {
   id: number;
   exerciseId: number;
   name: string;
+  measurementType: string | null;
+  category: string;
+  equipment: string;
   position: number;
   targetSets: number;
   minReps: number;
@@ -153,6 +158,9 @@ export async function getPlanExercises(planDayId: number): Promise<PlanExercise[
       id: workoutPlanExercises.id,
       exerciseId: exercises.id,
       name: exercises.name,
+      measurementType: exercises.measurementType,
+      category: exercises.category,
+      equipment: exercises.equipment,
       position: workoutPlanExercises.position,
       targetSets: workoutPlanExercises.targetSets,
       minReps: workoutPlanExercises.minReps,
@@ -175,7 +183,7 @@ export function estimateDurationMinutes(planExercises: PlanExercise[]): number {
   return Math.max(1, Math.round(seconds / 60));
 }
 
-/** Sets from the most recent *completed* session for an exercise (user-scoped). */
+/** Sets from the most recent *completed* session for an exercise (user-scoped, working sets only). */
 export async function getLastCompletedSets(userId: number, exerciseId: number) {
   const rows = await db
     .select({
@@ -183,6 +191,7 @@ export async function getLastCompletedSets(userId: number, exerciseId: number) {
       weightKg: workoutSets.weightKg,
       reps: workoutSets.reps,
       rpe: workoutSets.rpe,
+      setType: workoutSets.setType,
       sessionStartedAt: workoutSessions.startedAt,
     })
     .from(workoutSets)
@@ -199,6 +208,7 @@ export async function getLastCompletedSets(userId: number, exerciseId: number) {
         eq(workoutSessions.userId, userId),
         eq(workoutSessionExercises.exerciseId, exerciseId),
         eq(workoutSessions.status, "completed"),
+        eq(workoutSets.setType, "working"),
       ),
     )
     .orderBy(desc(workoutSessions.startedAt), asc(workoutSets.setNumber));
@@ -269,6 +279,7 @@ export interface SessionExerciseData {
   sessionExerciseId: number;
   exerciseId: number;
   name: string;
+  measurementType: string;
   position: number;
   targetSets: number;
   minReps: number;
@@ -285,8 +296,11 @@ export interface SessionExerciseData {
     weightKg: number;
     reps: number;
     rpe: number | null;
+    setType: string;
   }[];
-  status: "pending" | "completed" | "skipped" | "not_attempted";
+  status: "pending" | "completed" | "skipped" | "not_attempted" | "replaced";
+  origin: "planned" | "added" | "replacement";
+  replacementReason: string | null;
   skipReason: string | null;
 }
 
@@ -324,70 +338,157 @@ export async function getActiveWorkoutData(
     .from(workoutSessionExercises)
     .where(eq(workoutSessionExercises.workoutSessionId, sessionId));
 
-  const sseByExercise = new Map(
-    sseRows.map((row) => [row.exerciseId, row]),
-  );
+  const sseById = new Map(sseRows.map((row) => [row.id, row]));
+  const sseByExercise = new Map(sseRows.map((row) => [row.exerciseId, row]));
+  const planByExerciseId = new Map(planExercises.map((pe) => [pe.exerciseId, pe]));
 
+  const extraExercises: { exerciseId: number; name: string; measurementType: string; sse: typeof sseRows[number] }[] = [];
+  for (const sse of sseRows) {
+    if ((sse.origin === "added" || sse.origin === "replacement") && !planByExerciseId.has(sse.exerciseId)) {
+      const ex = (
+        await db
+          .select({
+            name: exercises.name,
+            measurementType: exercises.measurementType,
+            category: exercises.category,
+            equipment: exercises.equipment,
+          })
+          .from(exercises)
+          .where(eq(exercises.id, sse.exerciseId))
+          .limit(1)
+      )[0];
+      const name = ex?.name ?? "Exercise";
+      extraExercises.push({
+        exerciseId: sse.exerciseId,
+        name,
+        measurementType: measurementTypeFor({ measurementType: ex?.measurementType ?? null, category: ex?.category ?? null, equipment: ex?.equipment ?? null, name }),
+        sse,
+      });
+    }
+  }
+
+  const allExerciseIds = [...new Set([...planExercises.map((pe) => pe.exerciseId), ...extraExercises.map((ex) => ex.exerciseId)])];
   const recovery = await getLatestRecoverySnapshot(userId);
-  const mediaMap = await getExerciseMediaMap(
-    planExercises.map((pe) => pe.exerciseId),
-  );
-  const referenceMap = await getApprovedExternalReferences(
-    planExercises.map((pe) => pe.exerciseId),
-  );
+  const mediaMap = await getExerciseMediaMap(allExerciseIds);
+  const referenceMap = await getApprovedExternalReferences(allExerciseIds);
 
-  const exercisesData: SessionExerciseData[] = [];
-  for (const pe of planExercises) {
-    const sse = sseByExercise.get(pe.exerciseId);
-    const sets = sse
+  async function buildExerciseData(input: {
+    exerciseId: number;
+    name: string;
+    measurementType: string;
+    position: number;
+    targetSets: number;
+    minReps: number;
+    maxReps: number;
+    targetRpe: number;
+    restSeconds: number;
+    suggestedWeightKg: number | null;
+    sse: typeof sseRows[number] | undefined;
+  }): Promise<SessionExerciseData> {
+    const sets = input.sse
       ? await db
           .select({
             setNumber: workoutSets.setNumber,
             weightKg: workoutSets.weightKg,
             reps: workoutSets.reps,
             rpe: workoutSets.rpe,
+            setType: workoutSets.setType,
           })
           .from(workoutSets)
-          .where(eq(workoutSets.workoutSessionExerciseId, sse.id))
+          .where(eq(workoutSets.workoutSessionExerciseId, input.sse.id))
           .orderBy(asc(workoutSets.setNumber))
       : [];
 
-    const lastSets = await getLastCompletedSets(userId, pe.exerciseId);
+    const lastSets = await getLastCompletedSets(userId, input.exerciseId);
     const recommendation = recommendNextWeight({
-      targetSets: pe.targetSets,
-      minReps: pe.minReps,
-      maxReps: pe.maxReps,
-      targetRpe: pe.targetRpe,
+      targetSets: input.targetSets,
+      minReps: input.minReps,
+      maxReps: input.maxReps,
+      targetRpe: input.targetRpe,
       lastWeightKg:
-        lastSets.length > 0
-          ? lastSets[lastSets.length - 1].weightKg
-          : pe.suggestedWeightKg,
+        lastSets.length > 0 ? lastSets[lastSets.length - 1].weightKg : input.suggestedWeightKg,
       lastSets: lastSets.map((s) => ({ reps: s.reps, rpe: s.rpe })),
       recovery,
     });
 
-    exercisesData.push({
-      sessionExerciseId: sse?.id ?? 0,
-      exerciseId: pe.exerciseId,
-      name: pe.name,
-      position: pe.position,
-      targetSets: pe.targetSets,
-      minReps: pe.minReps,
-      maxReps: pe.maxReps,
-      targetRpe: pe.targetRpe,
-      restSeconds: pe.restSeconds,
+    return {
+      sessionExerciseId: input.sse?.id ?? 0,
+      exerciseId: input.exerciseId,
+      name: input.name,
+      measurementType: input.measurementType,
+      position: input.position,
+      targetSets: input.targetSets,
+      minReps: input.minReps,
+      maxReps: input.maxReps,
+      targetRpe: input.targetRpe,
+      restSeconds: input.restSeconds,
       suggestedWeightKg: recommendation.recommendedWeight,
       lastTime: summarizeLastTime(lastSets),
       recommendationReason: recommendation.reason,
-      media: mediaMap.get(pe.exerciseId) ?? null,
-      externalReference: buildExternalReference(
-        referenceMap.get(pe.exerciseId),
-      ),
+      media: mediaMap.get(input.exerciseId) ?? null,
+      externalReference: buildExternalReference(referenceMap.get(input.exerciseId)),
       loggedSets: sets,
-      status: (sse?.status as SessionExerciseData["status"]) ?? "pending",
-      skipReason: sse?.skipReason ?? null,
-    });
+      status: (input.sse?.status as SessionExerciseData["status"]) ?? "pending",
+      origin: (input.sse?.origin as SessionExerciseData["origin"]) ?? "planned",
+      replacementReason: input.sse?.replacementReason ?? null,
+      skipReason: input.sse?.skipReason ?? null,
+    };
   }
+
+  const exercisesData: SessionExerciseData[] = [];
+  for (const pe of planExercises) {
+    exercisesData.push(
+      await buildExerciseData({
+        exerciseId: pe.exerciseId,
+        name: pe.name,
+        measurementType: measurementTypeFor({ measurementType: pe.measurementType, category: pe.category, equipment: pe.equipment, name: pe.name }),
+        position: pe.position,
+        targetSets: pe.targetSets,
+        minReps: pe.minReps,
+        maxReps: pe.maxReps,
+        targetRpe: pe.targetRpe,
+        restSeconds: pe.restSeconds,
+        suggestedWeightKg: pe.suggestedWeightKg,
+        sse: sseByExercise.get(pe.exerciseId),
+      }),
+    );
+  }
+
+  for (const extra of extraExercises) {
+    const sse = extra.sse;
+    let prescription = { targetSets: 3, minReps: 8, maxReps: 12, targetRpe: 6, restSeconds: 90, suggestedWeightKg: null as number | null };
+    if (sse.origin === "replacement" && sse.replacesSessionExerciseId != null) {
+      const original = sseById.get(sse.replacesSessionExerciseId);
+      const planExercise = original ? planByExerciseId.get(original.exerciseId) : undefined;
+      if (planExercise) {
+        prescription = {
+          targetSets: planExercise.targetSets,
+          minReps: planExercise.minReps,
+          maxReps: planExercise.maxReps,
+          targetRpe: planExercise.targetRpe,
+          restSeconds: planExercise.restSeconds,
+          suggestedWeightKg: planExercise.suggestedWeightKg,
+        };
+      }
+    }
+    exercisesData.push(
+      await buildExerciseData({
+        exerciseId: extra.exerciseId,
+        name: extra.name,
+        measurementType: extra.measurementType,
+        position: sse.position,
+        targetSets: prescription.targetSets,
+        minReps: prescription.minReps,
+        maxReps: prescription.maxReps,
+        targetRpe: prescription.targetRpe,
+        restSeconds: prescription.restSeconds,
+        suggestedWeightKg: prescription.suggestedWeightKg,
+        sse,
+      }),
+    );
+  }
+
+  exercisesData.sort((a, b) => a.position - b.position);
 
   return {
     sessionId,
@@ -503,11 +604,14 @@ export interface SessionDetailExercise {
   name: string;
   status: string | null;
   skipReason: string | null;
+  origin: string | null;
+  replacementReason: string | null;
   sets: {
     setNumber: number;
     weightKg: number;
     reps: number;
     rpe: number | null;
+    setType: string;
   }[];
 }
 
@@ -522,6 +626,13 @@ export interface SessionDetail {
   energyRating: string | null;
   durationText: string;
   exercises: SessionDetailExercise[];
+  activities: {
+    id: number;
+    activityType: string;
+    activityRole: string;
+    name: string;
+    durationSeconds: number | null;
+  }[];
 }
 
 export async function getSessionDetail(
@@ -566,6 +677,7 @@ export async function getSessionDetail(
         weightKg: workoutSets.weightKg,
         reps: workoutSets.reps,
         rpe: workoutSets.rpe,
+        setType: workoutSets.setType,
       })
       .from(workoutSets)
       .where(eq(workoutSets.workoutSessionExerciseId, sse.id))
@@ -575,9 +687,17 @@ export async function getSessionDetail(
       name: ex?.name ?? "Exercise",
       status: sse.status,
       skipReason: sse.skipReason,
+      origin: sse.origin,
+      replacementReason: sse.replacementReason,
       sets,
     });
   }
+
+  const activityRows = await db
+    .select()
+    .from(workoutSessionActivities)
+    .where(eq(workoutSessionActivities.workoutSessionId, sessionId))
+    .orderBy(asc(workoutSessionActivities.sortOrder));
 
   return {
     id: session.id,
@@ -590,6 +710,13 @@ export async function getSessionDetail(
     energyRating: session.energyRating,
     durationText: formatDuration(session.startedAt, session.completedAt ?? new Date()),
     exercises: exercisesData,
+    activities: activityRows.map((row) => ({
+      id: row.id,
+      activityType: row.activityType,
+      activityRole: row.activityRole,
+      name: row.nameSnapshot ?? "",
+      durationSeconds: row.durationSeconds,
+    })),
   };
 }
 

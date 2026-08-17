@@ -6,6 +6,8 @@ import { useEffect, useRef, useState } from "react";
 import { formatWeight } from "@/lib/dates";
 import type { WeekDayView, WeekView } from "@/lib/week-view";
 import { CoachDecisionCard } from "./CoachDecisionCard";
+import { WeekRebuildModal } from "./WeekRebuildModal";
+import type { RebuildFollowUp, RebuildReasonOption } from "./WeekRebuildModal";
 
 interface MoveSwapData {
   kind: "move" | "swap";
@@ -72,11 +74,22 @@ const SKIP_SESSION_REASONS = [
   { key: "other", label: "Other" },
 ];
 
-export function WeekPlanner({ week, focusDayId }: { week: WeekView; focusDayId?: number }) {
+export function WeekPlanner({
+  week,
+  focusDayId,
+  rebuildReasons,
+  rebuildFollowUps,
+}: {
+  week: WeekView;
+  focusDayId?: number;
+  rebuildReasons?: RebuildReasonOption[];
+  rebuildFollowUps?: Record<string, RebuildFollowUp[]>;
+}) {
   const router = useRouter();
   const [sheet, setSheet] = useState<Sheet>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [rebuildOpen, setRebuildOpen] = useState(false);
   const openedFocus = useRef(false);
 
   useEffect(() => {
@@ -175,6 +188,16 @@ export function WeekPlanner({ week, focusDayId }: { week: WeekView; focusDayId?:
 
       {error && <p className="rounded-xl bg-red-500/10 p-3 text-sm text-red-300">{error}</p>}
 
+      {rebuildReasons && rebuildFollowUps && (
+        <button
+          type="button"
+          onClick={() => setRebuildOpen(true)}
+          className="w-full rounded-2xl border border-zinc-700 bg-zinc-900 py-4 text-center text-base font-bold text-zinc-100 transition active:scale-[0.98]"
+        >
+          ADJUST / REBUILD WEEK
+        </button>
+      )}
+
       <div className="space-y-3">
         {week.days.map((day) => {
           const isRest = day.exerciseCount === 0;
@@ -259,6 +282,16 @@ export function WeekPlanner({ week, focusDayId }: { week: WeekView; focusDayId?:
             />
           </div>
         </div>
+      )}
+
+      {rebuildReasons && rebuildFollowUps && rebuildOpen && (
+        <WeekRebuildModal
+          planId={week.planId}
+          week={week}
+          reasons={rebuildReasons}
+          followUps={rebuildFollowUps}
+          onClose={() => setRebuildOpen(false)}
+        />
       )}
     </div>
   );

@@ -1,0 +1,338 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import type { WeekView } from "@/lib/week-view";
+import { CoachDecisionCard } from "./CoachDecisionCard";
+
+export interface RebuildReasonOption {
+  key: string;
+  label: string;
+}
+
+export interface RebuildFollowUp {
+  id: string;
+  question: string;
+  options: string[];
+}
+
+interface StoredRebuild {
+  id: number;
+  status: string;
+  feedbackId: number | null;
+  proposal: {
+    overallAction: string;
+    confidence: string;
+    summary: string;
+    rationale: string[];
+    safetyFlags: string[];
+    questions: { id: string; question: string; options: string[] }[];
+    preservedDays: { dayNumber: number; reason: string }[];
+    proposedDays: {
+      dayNumber: number;
+      status: "workout" | "rest";
+      title: string | null;
+      exercises: { exerciseName: string; sets: number; minReps: number; maxReps: number; suggestedWeightKg: number | null }[];
+    }[];
+    aiMetadata?: { model: string };
+  };
+  diff: { summary: string[] };
+}
+
+export function WeekRebuildModal({
+  planId,
+  week,
+  reasons,
+  followUps,
+  onClose,
+}: {
+  planId: number;
+  week: WeekView;
+  reasons: RebuildReasonOption[];
+  followUps: Record<string, RebuildFollowUp[]>;
+  onClose: () => void;
+}) {
+  const router = useRouter();
+  const [step, setStep] = useState<"reason" | "details" | "review">("reason");
+  const [reason, setReason] = useState<string | null>(null);
+  const [details, setDetails] = useState<Record<string, unknown>>({});
+  const [freeText, setFreeText] = useState("");
+  const [proposal, setProposal] = useState<StoredRebuild | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit() {
+    setBusy(true);
+    setError(null);
+    const res = await fetch("/api/week-rebuild", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        planId,
+        feedback: { primaryReason: reason, secondaryReasons: [], structuredDetails: details, freeText: freeText || null },
+      }),
+    });
+    const data = await res.json();
+    setBusy(false);
+    if (data.error) {
+      setError(data.error);
+      return;
+    }
+    setProposal(data);
+    setStep("review");
+  }
+
+  async function answer(questionId: string, answer: string) {
+    setBusy(true);
+    setError(null);
+    const res = await fetch(`/api/week-rebuild/${proposal!.id}/answer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ questionId, answer }),
+    });
+    const data = await res.json();
+    setBusy(false);
+    if (data.error) {
+      setError(data.error);
+      return;
+    }
+    setProposal(data);
+  }
+
+  async function apply() {
+    setBusy(true);
+    setError(null);
+    const res = await fetch(`/api/week-rebuild/${proposal!.id}/apply`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmation: "approve" }),
+    });
+    const data = await res.json();
+    setBusy(false);
+    if (data.ok) {
+      onClose();
+      router.refresh();
+      return;
+    }
+    setError(data.error ?? "Could not apply.");
+  }
+
+  function renderDetails() {
+    if (!reason) return null;
+
+    if (reason === "schedule_changed") {
+      const remaining = week.days.filter((day) => day.dateISO >= todayISO());
+      return (
+        <div className="space-y-2">
+          <p className="text-sm text-zinc-400">Which days can you train for the rest of this week?</p>
+          {remaining.map((day) => {
+            const selected = (details.available_days as number[])?.includes(day.dayNumber);
+            return (
+              <button
+                key={day.planDayId}
+                type="button"
+                onClick={() => {
+                  const current = new Set<number>((details.available_days as number[]) ?? []);
+                  if (current.has(day.dayNumber)) current.delete(day.dayNumber);
+                  else current.add(day.dayNumber);
+                  setDetails({ ...details, available_days: [...current].sort((a, b) => a - b) });
+                }}
+                className={`w-full rounded-2xl px-4 py-3 text-left ${selected ? "bg-emerald-500 text-zinc-950" : "bg-zinc-800 text-zinc-100"}`}
+              >
+                <span className="font-semibold">{day.dayName}</span>
+                <span className="ml-2 text-sm opacity-70">{day.dateISO}</span>
+              </button>
+            );
+          })}
+        </div>
+      );
+    }
+
+    if (reason === "exercise_preference") {
+      const names = [...new Set(week.days.filter((day) => day.exerciseCount > 0).flatMap((day) => day.exerciseNames))];
+      return (
+        <div className="space-y-2">
+          <p className="text-sm text-zinc-400">Which exercise don&apos;t you like?</p>
+          {names.length === 0 && <p className="text-sm text-zinc-500">No exercises found this week.</p>}
+          {names.map((name) => (
+            <button
+              key={name}
+              type="button"
+              onClick={() => setDetails({ ...details, disliked_exercise: name })}
+              className={`w-full rounded-2xl px-4 py-3 text-left ${details.disliked_exercise === name ? "bg-emerald-500 text-zinc-950" : "bg-zinc-800 text-zinc-100"}`}
+            >
+              {name}
+            </button>
+          ))}
+        </div>
+      );
+    }
+
+    const follow = followUps[reason] ?? [];
+    return (
+      <div className="space-y-4">
+        {follow.map((question) => (
+          <div key={question.id}>
+            <p className="mb-2 text-sm text-zinc-400">{question.question}</p>
+            <div className="space-y-2">
+              {question.options.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  onClick={() => setDetails({ ...details, [question.id]: option })}
+                  className={`w-full rounded-2xl px-4 py-3 text-left ${details[question.id] === option ? "bg-emerald-500 text-zinc-950" : "bg-zinc-800 text-zinc-100"}`}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/60" onClick={() => !busy && onClose()}>
+      <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-t-3xl border-t border-zinc-800 bg-zinc-900 p-5 pb-8" onClick={(e) => e.stopPropagation()}>
+        <h2 className="mb-3 text-2xl font-bold">Adjust / rebuild week</h2>
+        {error && <p className="mb-3 rounded-xl bg-red-500/10 p-3 text-sm text-red-300">{error}</p>}
+
+        {step === "reason" && (
+          <div className="space-y-2">
+            <p className="text-sm text-zinc-400">What&apos;s not working?</p>
+            {reasons.map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => {
+                  setReason(option.key);
+                  setStep("details");
+                }}
+                className="w-full rounded-2xl bg-zinc-800 px-4 py-3 text-left text-zinc-100 transition active:scale-[0.99]"
+              >
+                {option.label}
+              </button>
+            ))}
+            <button type="button" onClick={onClose} className="mt-3 w-full rounded-2xl py-3 text-base font-semibold text-zinc-500">
+              CLOSE
+            </button>
+          </div>
+        )}
+
+        {step === "details" && (
+          <div className="space-y-4">
+            {renderDetails()}
+            <textarea
+              value={freeText}
+              onChange={(e) => setFreeText(e.target.value)}
+              placeholder="Anything else? (optional)"
+              className="w-full rounded-2xl border border-zinc-700 bg-zinc-800 p-3 text-sm text-zinc-100"
+              rows={2}
+            />
+            <button
+              type="button"
+              disabled={busy}
+              onClick={submit}
+              className="w-full rounded-2xl bg-emerald-500 py-4 text-lg font-bold text-zinc-950 transition active:scale-[0.98] disabled:opacity-60"
+            >
+              {busy ? "Thinking…" : "REVIEW MY WEEK"}
+            </button>
+            <button type="button" onClick={() => setStep("reason")} className="w-full rounded-2xl py-3 text-base font-semibold text-zinc-500">
+              BACK
+            </button>
+          </div>
+        )}
+
+        {step === "review" && proposal && (
+          <div className="space-y-4">
+            <p className="text-sm text-zinc-300">{proposal.proposal.summary}</p>
+            <CoachDecisionCard
+              confidence={proposal.proposal.confidence}
+              rationale={proposal.proposal.rationale}
+              safetyFlags={proposal.proposal.safetyFlags}
+              model={proposal.proposal.aiMetadata?.model}
+            />
+
+            <div>
+              <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-zinc-500">Revised week</p>
+              <div className="space-y-1">
+                {week.days.map((day) => {
+                  const preserved = proposal.proposal.preservedDays.find((p) => p.dayNumber === day.dayNumber);
+                  const proposed = proposal.proposal.proposedDays.find((p) => p.dayNumber === day.dayNumber);
+                  const label = preserved
+                    ? `${day.dayName} · completed — unchanged`
+                    : proposed && proposed.status === "workout"
+                      ? `${day.dayName} · ${proposed.title ?? "Workout"} · ${proposed.exercises.length} exercises`
+                      : `${day.dayName} · Rest`;
+                  return (
+                    <div key={day.planDayId} className="flex items-center justify-between rounded-xl bg-zinc-800 px-3 py-2 text-sm">
+                      <span>{label}</span>
+                      {preserved && <span className="text-emerald-400">✓</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {proposal.diff.summary.length > 0 && (
+              <div>
+                <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-zinc-500">What changed</p>
+                <ul className="list-disc space-y-1 pl-5 text-sm text-zinc-300">
+                  {proposal.diff.summary.map((line, i) => (
+                    <li key={i}>{line}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {proposal.proposal.questions.length > 0 && (
+              <div className="space-y-2">
+                {proposal.proposal.questions.map((question) => (
+                  <div key={question.id}>
+                    <p className="mb-2 text-sm text-zinc-300">{question.question}</p>
+                    <div className="space-y-2">
+                      {question.options.map((option) => (
+                        <button
+                          key={option}
+                          type="button"
+                          disabled={busy}
+                          onClick={() => answer(question.id, option)}
+                          className="w-full rounded-2xl bg-zinc-800 px-4 py-3 text-left text-zinc-100"
+                        >
+                          {option}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {proposal.proposal.questions.length === 0 && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={apply}
+                className="w-full rounded-2xl bg-emerald-500 py-4 text-lg font-bold text-zinc-950 transition active:scale-[0.98] disabled:opacity-60"
+              >
+                {busy ? "Applying…" : "ACCEPT CHANGES"}
+              </button>
+            )}
+            <button type="button" onClick={onClose} className="w-full rounded-2xl py-3 text-base font-semibold text-zinc-500">
+              KEEP CURRENT WEEK
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function todayISO(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}

@@ -28,6 +28,7 @@ export interface WeekDayView {
   dateISO: string;
   origin: "moved" | "extra" | null;
   exerciseCount: number;
+  exerciseNames: string[];
   durationMinutes: number;
   status: DayStatus;
   sessionId: number | null;
@@ -66,6 +67,7 @@ export async function getWeekView(userId: number): Promise<WeekView | null> {
       ? db
           .select({
             dayId: workoutPlanExercises.workoutPlanDayId,
+            name: exercises.name,
             targetSets: workoutPlanExercises.targetSets,
             restSeconds: workoutPlanExercises.restSeconds,
           })
@@ -90,11 +92,12 @@ export async function getWeekView(userId: number): Promise<WeekView | null> {
   ]);
 
   const todayISO = toISODate(new Date());
-  const exerciseCountByDay = new Map<number, { count: number; duration: number }>();
+  const exerciseCountByDay = new Map<number, { count: number; duration: number; names: string[] }>();
   for (const row of exerciseRows) {
-    const entry = exerciseCountByDay.get(row.dayId) ?? { count: 0, duration: 0 };
+    const entry = exerciseCountByDay.get(row.dayId) ?? { count: 0, duration: 0, names: [] };
     entry.count += 1;
     entry.duration += row.targetSets * (row.restSeconds + 45);
+    entry.names.push(row.name);
     exerciseCountByDay.set(row.dayId, entry);
   }
   const sessionsByDay = new Map<number, typeof sessionRows>();
@@ -122,7 +125,7 @@ export async function getWeekView(userId: number): Promise<WeekView | null> {
     const dateISO = addDaysToISODate(plan.startsOn, day.dayNumber - 1);
     const isToday = dateISO === todayISO;
     const isPast = dateISO < todayISO;
-    const info = exerciseCountByDay.get(day.id) ?? { count: 0, duration: 0 };
+    const info = exerciseCountByDay.get(day.id) ?? { count: 0, duration: 0, names: [] as string[] };
     const sessions = sessionsByDay.get(day.id) ?? [];
     const completedSession = sessions.find((s) => s.status === "completed");
     const endedEarlySession = sessions.find((s) => s.status === "ended_early");
@@ -161,6 +164,7 @@ export async function getWeekView(userId: number): Promise<WeekView | null> {
       dateISO,
       origin: (day.origin as "moved" | "extra" | null) ?? null,
       exerciseCount: info.count,
+      exerciseNames: info.names,
       durationMinutes: Math.max(1, Math.round(info.duration / 60)),
       status,
       sessionId,

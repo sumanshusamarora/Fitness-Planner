@@ -6,7 +6,8 @@ export type CoachMode =
   | "extra_session"
   | "recovery_review"
   | "exercise_substitution"
-  | "nutrition_review";
+  | "nutrition_review"
+  | "week_rebuild";
 
 export type CoachReasoningEffort = "low" | "medium" | "high";
 

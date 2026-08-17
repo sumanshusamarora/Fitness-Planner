@@ -115,6 +115,7 @@ export async function buildTrainingContext(
               eq(workoutSessions.userId, userId),
               inArray(workoutSessionExercises.exerciseId, exerciseIds),
               eq(workoutSessions.status, "completed"),
+              eq(workoutSets.setType, "working"),
             ),
           )
           .orderBy(desc(workoutSessions.completedAt), asc(workoutSets.setNumber))

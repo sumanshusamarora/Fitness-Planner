@@ -36,8 +36,9 @@ planning.
 ## Workflow
 
 - [ ] Read only the references relevant to the decision: always `safety.md`,
-  then progression, longitudinal adaptation, recovery, beginner training,
-  exercise selection, scheduling, or research policy as needed.
+  then progression, longitudinal adaptation, week feedback and rebuild,
+  recovery, beginner training, exercise selection, scheduling, or research
+  policy as needed.
 - [ ] Run `npm run coach -- users` to find the active user, then pass
   `--user <id|username>` to every command below.
 - [ ] Run `npm run coach -- context --user <u>` to inspect the compact structured context.
@@ -95,6 +96,8 @@ planning.
 
 - [Progression](references/progression.md) — load/reps/RPE decisions and incomplete-session interpretation.
 - [Longitudinal adaptation](references/longitudinal-adaptation.md) — performance, tolerance, adaptation rate, and plateau (deterministic analytics the coach interprets).
+- [Actual session semantics](references/actual-session-semantics.md) — plan vs actual, added/replaced work, warm-up sets, and measurement types.
+- [Week feedback and rebuild](references/week-feedback-and-rebuild.md) — rebuilding the remaining week from structured feedback.
 - [Initial programming](references/initial-programming.md) — building a new user's first week.
 - [Recovery](references/recovery.md) — recovery and missed-session signals.
 - [Beginner training](references/beginner-training.md) — return-to-training guardrails.

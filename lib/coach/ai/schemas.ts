@@ -162,6 +162,84 @@ export const NutritionCoachDecisionSchema = CoachDecisionBaseSchema.extend({
 
 export type NutritionCoachDecision = z.infer<typeof NutritionCoachDecisionSchema>;
 
+const RebuildProposedExerciseSchema = z.object({
+  exerciseId: z.number().int().positive(),
+  exerciseName: z.string().min(1).max(120),
+  sets: z.number().int().min(1).max(10),
+  minReps: z.number().int().min(1).max(30),
+  maxReps: z.number().int().min(1).max(30),
+  targetRpe: z.number().int().min(1).max(9),
+  suggestedWeightKg: z.number().min(0).nullable(),
+  restSeconds: z.number().int().min(0).max(600),
+});
+
+const RebuildProposedDaySchema = z.object({
+  dayNumber: z.number().int().min(1).max(7),
+  dateISO: z.string().min(8).max(12),
+  status: z.enum(["workout", "rest"]),
+  existingDayId: z.number().int().positive().nullable(),
+  title: z.string().min(1).max(120).nullable(),
+  exercises: z.array(RebuildProposedExerciseSchema).max(12),
+});
+
+const RebuildPreservedDaySchema = z.object({
+  dayId: z.number().int().positive(),
+  dayNumber: z.number().int().min(1).max(7),
+  dateISO: z.string().min(8).max(12),
+  reason: z.enum(["completed", "in_progress"]),
+});
+
+const RebuildChangeSchema = z.object({
+  type: z.enum([
+    "remove_session",
+    "add_session",
+    "shorten_session",
+    "reduce_volume",
+    "increase_volume",
+    "adjust_load",
+    "adjust_rpe",
+    "move_day",
+    "change_exercise",
+    "keep",
+  ]),
+  date: z.string().min(8).max(12),
+  exerciseId: z.number().int().positive().optional(),
+  before: z.record(z.string(), z.unknown()).optional(),
+  after: z.record(z.string(), z.unknown()).optional(),
+  reason: z.string().min(1).max(320),
+});
+
+export const WeekRebuildProposalSchema = z.object({
+  proposalType: z.literal("week_rebuild"),
+  workoutPlanId: z.number().int().positive(),
+  effectiveFromDate: z.string().min(8).max(12),
+  feedback: z.object({
+    primaryReason: z.string().min(1).max(40),
+  }),
+  overallAction: z.enum(["keep_plan", "modify_remaining_week", "replace_unstarted_week", "needs_input"]),
+  confidence: z.enum(["high", "medium", "needs_input"]),
+  summary: z.string().min(1).max(400),
+  rationale: z.array(z.string().min(1).max(320)).max(6),
+  preservedDays: z.array(RebuildPreservedDaySchema).max(7),
+  proposedDays: z.array(RebuildProposedDaySchema).min(1).max(7),
+  changes: z.array(RebuildChangeSchema).max(20),
+  questions: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(80),
+        question: z.string().min(1).max(320),
+        reason: z.string().min(1).max(320).optional(),
+        options: z.array(z.string().min(1).max(120)).min(1).max(6),
+        required: z.boolean().optional(),
+      }),
+    )
+    .max(3),
+  safetyFlags: z.array(z.string().min(1).max(320)).max(5),
+  methodologyVersion: z.string().min(1).max(80),
+});
+
+export type WeekRebuildProposalAI = z.infer<typeof WeekRebuildProposalSchema>;
+
 export const CoachDecisionSchemas = {
   initial_week: WeeklyPlanProposalSchema,
   next_week: WeeklyPlanProposalSchema,
@@ -169,4 +247,5 @@ export const CoachDecisionSchemas = {
   recovery_review: RecoveryCoachDecisionSchema,
   exercise_substitution: SubstitutionCoachDecisionSchema,
   nutrition_review: NutritionCoachDecisionSchema,
+  week_rebuild: WeekRebuildProposalSchema,
 } as const;

@@ -31,12 +31,14 @@ export async function POST(
     weightKg?: number;
     reps?: number;
     rpe?: number | null;
+    setType?: string;
   };
 
   const exerciseId = Number(body.exerciseId);
   const weightKg = Number(body.weightKg);
   const reps = Number(body.reps);
   const rpe = body.rpe == null ? null : Number(body.rpe);
+  const setType = body.setType === "warmup" ? "warmup" : "working";
 
   if (
     !Number.isFinite(weightKg) ||
@@ -45,6 +47,12 @@ export async function POST(
     reps < 0
   ) {
     return NextResponse.json({ error: "Invalid weight or reps" }, { status: 400 });
+  }
+
+  // Bodyweight / timed-hold movements legitimately log weight 0. A set needs
+  // either a weight OR a rep/time value; never both missing.
+  if (reps <= 0 && weightKg <= 0) {
+    return NextResponse.json({ error: "Enter a weight or reps." }, { status: 400 });
   }
 
   const sse = (
@@ -79,6 +87,7 @@ export async function POST(
       weightKg,
       reps,
       rpe,
+      setType,
     })
     .returning();
 

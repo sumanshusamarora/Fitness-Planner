@@ -71,6 +71,7 @@ export interface ExerciseMeta {
   equipment: string;
   category: string;
   primaryMuscle: string;
+  measurementType: string | null;
 }
 
 export interface SessionRecord {

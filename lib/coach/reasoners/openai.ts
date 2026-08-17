@@ -10,14 +10,19 @@ import {
   RecoveryCoachDecisionSchema,
   SubstitutionCoachDecisionSchema,
   WeeklyPlanProposalSchema,
+  WeekRebuildProposalSchema,
   type ExtraSessionCoachDecision,
   type NutritionCoachDecision,
   type RecoveryCoachDecision,
   type SubstitutionCoachDecision,
   type WeeklyPlanProposalAI,
+  type WeekRebuildProposalAI,
 } from "../ai/schemas";
 import { CoachInvalidError, CoachUnavailableError } from "../ai/types";
 import { validateAIWeeklyProposal, validateExtraSessionDecision, validateInitialWeekAIConstraints } from "../ai/validation";
+import { validateWeekRebuildProposal } from "@/lib/week-rebuild/validate";
+import { getRecentWeekFeedbackSummary } from "@/lib/week-rebuild/feedback";
+import type { WeekRebuildContext, WeekRebuildProposal } from "@/lib/week-rebuild/types";
 import { buildExtraSessionContext, analyseExtraSessionFromRolling } from "../restDay";
 import { initialWeekCandidateNames, initialWeekConstraints } from "../proposeFirstWeek";
 import type { InitialTrainingContext, TrainingContext, WeekAnalysis, WeeklyPlanProposal } from "../types";
@@ -92,6 +97,7 @@ export class OpenAICoachReasoner implements CoachReasoner {
         recovery: context.recovery.latest,
         rolling,
         candidateExercises: candidates,
+        recentFeedback: await getRecentWeekFeedbackSummary(context.user.id),
       },
       constraints: {
         resistanceDays: constraints.resistanceDays,
@@ -209,6 +215,7 @@ export class OpenAICoachReasoner implements CoachReasoner {
         },
         progress: context.progress,
         rolling,
+        recentFeedback: await getRecentWeekFeedbackSummary(context.user.id),
       },
     });
     if (!isSuccess(result)) throwForFailure(result);
@@ -393,4 +400,81 @@ export class OpenAICoachReasoner implements CoachReasoner {
     if (!isSuccess(result)) throwForFailure(result);
     return result.decision;
   }
+
+  async proposeWeekRebuild(context: WeekRebuildContext): Promise<WeekRebuildProposal> {
+    const result = await runCoachDecision<WeekRebuildProposalAI>({
+      mode: "week_rebuild",
+      schema: WeekRebuildProposalSchema,
+      reasoningEffort: "high",
+      context: buildRebuildAIContext(context),
+      constraints: {
+        modifiableDayNumbers: context.currentWeek.days.filter((d) => d.modifiable).map((d) => d.dayNumber),
+        remainingAvailableDayNumbers: context.constraints.remainingAvailableDayNumbers,
+        maxExercisesPerDay: context.constraints.maxExercisesPerDay,
+        minSets: context.constraints.minSets,
+        maxSets: context.constraints.maxSets,
+        maxRpe: context.constraints.maxRpe,
+        allowedExerciseIds: context.constraints.allowedExerciseIds,
+      },
+    });
+    if (!isSuccess(result)) throwForFailure(result);
+
+    const proposal: WeekRebuildProposal = {
+      ...result.decision,
+      feedback: {
+        primaryReason: result.decision.feedback.primaryReason as WeekRebuildProposal["feedback"]["primaryReason"],
+      },
+      aiMetadata: result.metadata,
+    };
+    try {
+      validateWeekRebuildProposal(proposal, context);
+    } catch (error) {
+      throw new CoachInvalidError(error instanceof Error ? error.message : "Invalid week-rebuild proposal.");
+    }
+    return proposal;
+  }
+}
+
+function buildRebuildAIContext(context: WeekRebuildContext) {
+  const progress = context.progress;
+  return {
+    user: { id: context.user.id },
+    profile: context.profile,
+    feedback: context.feedback,
+    recovery: context.recovery,
+    progress: {
+      trainingStage: progress.trainingStage,
+      performance: progress.performance,
+      tolerance: {
+        trend: progress.tolerance.trend,
+        adherenceRate: progress.tolerance.adherenceRate,
+        recoveryTrend: progress.tolerance.recoveryTrend,
+        meaningfulJointPain: progress.tolerance.meaningfulJointPain,
+        painFlags: progress.tolerance.painFlags,
+        evidence: progress.tolerance.evidence,
+      },
+      adaptation: progress.adaptation,
+      plateau: progress.plateau,
+    },
+    currentWeek: {
+      planId: context.currentWeek.planId,
+      weekNumber: context.currentWeek.weekNumber,
+      startsOn: context.currentWeek.startsOn,
+      completedSessions: context.currentWeek.completedSessions,
+      plannedSessions: context.currentWeek.plannedSessions,
+      days: context.currentWeek.days.map((day) => ({
+        dayId: day.dayId,
+        dayNumber: day.dayNumber,
+        dayName: day.dayName,
+        dateISO: day.dateISO,
+        title: day.title,
+        sessionStatus: day.sessionStatus,
+        modifiable: day.modifiable,
+        isWorkout: day.isWorkout,
+        exercises: day.exercises,
+      })),
+    },
+    future: context.future,
+    constraints: context.constraints,
+  };
 }
