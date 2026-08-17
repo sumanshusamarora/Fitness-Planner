@@ -37,6 +37,8 @@ function isSuccess<T>(result: CoachDecisionResult<T> | CoachDecisionFailure): re
   return result.ok;
 }
 
+const DAY_NAMES = ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
 interface CompactExercise {
   exerciseId: number;
   name: string;
@@ -122,6 +124,23 @@ export class OpenAICoachReasoner implements CoachReasoner {
         return { ...exercise, sourcePlanExerciseId: id, previous: exercise.proposed };
       }),
     }));
+
+    // Ensure a full Monday–Sunday week, filling any missing rest days so the
+    // Week 1 plan mirrors the deterministic builder exactly.
+    const presentDays = new Set(proposal.days.map((day) => day.dayNumber));
+    for (let dayNumber = 1; dayNumber <= 7; dayNumber++) {
+      if (!presentDays.has(dayNumber)) {
+        proposal.days.push({
+          sourcePlanDayId: -dayNumber,
+          dayNumber,
+          dayName: DAY_NAMES[dayNumber],
+          title: "Rest",
+          exercises: [],
+        });
+      }
+    }
+    proposal.days.sort((a, b) => a.dayNumber - b.dayNumber);
+
     proposal.changes = proposal.days.flatMap((day) =>
       day.exercises.map(({ position, restSeconds, ...change }) => change),
     );
