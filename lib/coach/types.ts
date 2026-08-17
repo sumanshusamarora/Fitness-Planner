@@ -1,4 +1,5 @@
 import type { RecoverySnapshot } from "@/lib/progression";
+import type { CoachRunMetadata } from "./ai/types";
 
 export type CoachConfidence = "high" | "medium" | "needs-input";
 export type ProposalStatus =
@@ -165,11 +166,9 @@ export interface WeeklyPlanProposal {
   days: ProposedWorkoutDay[];
   questions: CoachQuestion[];
   confidence: CoachConfidence;
-  methodologyVersion: "local-deterministic-v1";
-}
-
-export interface CoachReasoner {
-  proposeWeek(context: TrainingContext): Promise<WeeklyPlanProposal>;
+  methodologyVersion: string;
+  /** Set when this proposal came from the runtime AI coach. */
+  aiMetadata?: CoachRunMetadata;
 }
 
 export interface InitialTrainingContext {

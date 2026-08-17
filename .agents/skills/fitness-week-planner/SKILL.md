@@ -25,6 +25,14 @@ PostgreSQL and keeps plan writes behind a confirmation boundary. Schedule
 changes go through the same proposal → confirmation → apply path as weekly
 planning.
 
+> **Runtime AI coach:** In production, an optional GPT-5 reasoner
+> (`lib/coach/reasoners/openai.ts`, via the shared `CoachReasoner` interface and
+> `lib/coach/ai/runCoach.ts`) augments first-week, next-week and extra-session
+> proposals when `OPEN_API_KEY` is set. It is read-only and always falls back to
+> the deterministic engine in this skill. The `npm run coach:*` CLI described
+> below always drives the deterministic path, so this skill's workflow is
+> unchanged.
+
 ## Workflow
 
 - [ ] Read only the references relevant to the decision: always `safety.md`,

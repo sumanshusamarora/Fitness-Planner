@@ -7,6 +7,7 @@ import {
   workoutPlans,
   workoutSessions,
 } from "@/db/schema";
+import type { CoachRunMetadata } from "./coach/ai/types";
 
 export type AdjustmentType =
   | "move_workout"
@@ -43,6 +44,11 @@ export interface AddWorkoutProposal {
   reason: string;
   note: string | null;
   exercises: AddWorkoutExercise[];
+  /** Set when this proposal came from the runtime AI coach. */
+  aiMetadata?: CoachRunMetadata;
+  aiRationale?: string[];
+  confidence?: "high" | "medium" | "needs_input";
+  safetyFlags?: string[];
 }
 
 export type AdjustmentProposalData = MoveSwapProposal | AddWorkoutProposal;

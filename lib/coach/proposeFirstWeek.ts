@@ -79,6 +79,28 @@ function templatesFor(environment: string | null): DayTemplates {
   return { a: FULL_A, b: FULL_B };
 }
 
+export function initialWeekConstraints(context: InitialTrainingContext) {
+  const { sets, rpe, conservative } = experienceParams(context.profile.experienceLevel);
+  return {
+    sets,
+    rpe,
+    conservative,
+    maxExercisesPerDay: exercisesPerDay(context.profile.sessionMinutes),
+    resistanceDays: pickResistanceDays(
+      context.profile.desiredDaysPerWeek,
+      context.profile.preferredDays,
+      conservative,
+    ).days,
+    templates: templatesFor(context.profile.trainingEnvironment),
+  };
+}
+
+/** Candidate exercise names the AI may choose from for a first week. */
+export function initialWeekCandidateNames(environment: string | null): string[] {
+  const templates = templatesFor(environment);
+  return [...new Set([...templates.a, ...templates.b].map((entry) => entry.name))];
+}
+
 function experienceParams(level: string | null): { sets: number; rpe: number; conservative: boolean } {
   switch (level) {
     case "beginner":

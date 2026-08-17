@@ -2,6 +2,8 @@ import { and, desc, eq, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { weeklyPlanProposals } from "@/db/schema";
 import { getActivePlan } from "@/lib/workouts";
+import { isAICoachAvailable } from "./ai/client";
+import { OpenAICoachReasoner } from "./reasoners/openai";
 import { analyseWeek } from "./analyseWeek";
 import { buildTrainingContext } from "./buildTrainingContext";
 import { buildInitialTrainingContext } from "./initialContext";
@@ -9,7 +11,7 @@ import { proposeFirstWeek } from "./proposeFirstWeek";
 import { proposeNextWeek } from "./proposeNextWeek";
 import { parseWeeklyPlanProposal } from "./schemas";
 import { validateInitialWeekProposal, validateProposal } from "./validateProposal";
-import type { WeeklyPlanProposal } from "./types";
+import type { InitialTrainingContext, TrainingContext, WeeklyPlanProposal } from "./types";
 
 export interface StoredWeeklyPlanProposal {
   id: number;
@@ -25,7 +27,8 @@ export async function createProposalForPlan(
 ): Promise<StoredWeeklyPlanProposal> {
   const context = await buildTrainingContext(userId, sourcePlanId);
   if (!context) throw new Error("Could not build coaching context for this week.");
-  const proposal = validateProposal(proposeNextWeek(context, analyseWeek(context)), context);
+  const analysis = analyseWeek(context);
+  const proposal = validateProposal(await buildNextWeekProposal(context, analysis), context);
   const existing = await db
     .select()
     .from(weeklyPlanProposals)
@@ -109,7 +112,7 @@ export async function createInitialProposal(
       ),
     );
 
-  const proposal = validateInitialWeekProposal(await proposeFirstWeek(context));
+  const proposal = validateInitialWeekProposal(await buildInitialWeekProposal(context));
   const [record] = await db
     .insert(weeklyPlanProposals)
     .values({
@@ -122,6 +125,33 @@ export async function createInitialProposal(
     })
     .returning();
   return { id: record.id, status: record.status, proposalType: "initial_week", proposal, generatedAt: record.generatedAt };
+}
+
+async function buildNextWeekProposal(
+  context: TrainingContext,
+  analysis: ReturnType<typeof analyseWeek>,
+): Promise<WeeklyPlanProposal> {
+  if (isAICoachAvailable()) {
+    try {
+      return await new OpenAICoachReasoner().proposeNextWeek(context, analysis);
+    } catch (error) {
+      console.warn("[coach] AI next-week unavailable; falling back to deterministic.", error);
+    }
+  }
+  return proposeNextWeek(context, analysis);
+}
+
+async function buildInitialWeekProposal(
+  context: InitialTrainingContext,
+): Promise<WeeklyPlanProposal> {
+  if (isAICoachAvailable()) {
+    try {
+      return await new OpenAICoachReasoner().proposeInitialWeek(context);
+    } catch (error) {
+      console.warn("[coach] AI initial-week unavailable; falling back to deterministic.", error);
+    }
+  }
+  return proposeFirstWeek(context);
 }
 
 /** Returns the user's draft initial proposal, or null if none exists yet. */

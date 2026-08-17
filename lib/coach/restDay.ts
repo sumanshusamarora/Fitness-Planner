@@ -1,9 +1,10 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { exercises, workoutPlanDays, workoutPlanExercises, workoutPlans } from "@/db/schema";
 import { hasMeaningfulJointPain, hasPoorRecovery } from "@/lib/progression";
 import { getLatestRecoverySnapshot } from "@/lib/recovery";
 import { getLastCompletedSets } from "@/lib/workouts";
+import type { RollingCoachContext } from "@/lib/coach/ai/context";
 import type { AddWorkoutExercise } from "@/lib/schedule";
 
 export type Effort = "light" | "usual" | "heavy";
@@ -17,7 +18,7 @@ export interface RestDayWorkout {
 }
 
 /** Curated complementary movements for ad-hoc sessions. Compounds stay in the plan. */
-const COMPLEMENTARY_POOL = [
+export const COMPLEMENTARY_POOL = [
   { name: "Cable Triceps Pushdown", muscle: "Triceps" },
   { name: "Dumbbell Curl", muscle: "Biceps" },
   { name: "Cable Curl", muscle: "Biceps" },
@@ -33,7 +34,7 @@ const COMPLEMENTARY_POOL = [
   { name: "Exercise Bike", muscle: "Cardiovascular" },
 ];
 
-interface EffortPreset {
+export interface EffortPreset {
   sets: number;
   minReps: number;
   maxReps: number;
@@ -43,20 +44,34 @@ interface EffortPreset {
   title: string;
 }
 
-const PRESETS: Record<Effort, EffortPreset> = {
+export const PRESETS: Record<Effort, EffortPreset> = {
   light: { sets: 1, minReps: 8, maxReps: 12, targetRpe: 5, restSeconds: 60, count: 2, title: "Light Session" },
   usual: { sets: 2, minReps: 8, maxReps: 12, targetRpe: 6, restSeconds: 90, count: 3, title: "Extra Session" },
   heavy: { sets: 3, minReps: 8, maxReps: 12, targetRpe: 7, restSeconds: 120, count: 4, title: "Bonus Session" },
 };
 
-interface EffortContext {
+export interface EffortContext {
   jointPain: boolean;
   poorRecovery: boolean;
   earlyPhase: boolean;
   adjacentOverlap: boolean;
 }
 
-function resolveEffort(
+/**
+ * Requested effort is a maximum. The effective effort may never exceed it.
+ */
+export function allowedEffortsFor(requested: Effort): (Effort | null)[] {
+  switch (requested) {
+    case "light":
+      return [null, "light"];
+    case "usual":
+      return [null, "light", "usual"];
+    case "heavy":
+      return [null, "light", "usual", "heavy"];
+  }
+}
+
+export function resolveEffort(
   requested: Effort,
   ctx: EffortContext,
 ): { effort: Effort; reason: string; note: string | null } {
@@ -102,13 +117,51 @@ function resolveEffort(
   return { effort: "heavy", reason: "Recovery and schedule allow a harder bonus session.", note: null };
 }
 
-export async function proposeRestDayWorkout(input: {
+/**
+ * Deterministic extra-session analysis derived from a rolling context alone
+ * (no extra DB round-trips). Used to seed the AI prompt and as a fallback.
+ */
+export function analyseExtraSessionFromRolling(
+  context: RollingCoachContext,
+  requestedEffort: Effort,
+): { effort: Effort; reason: string; note: string | null; allowedEfforts: (Effort | null)[] } {
+  const recovery = context.today.latestRecovery;
+  const ctx: EffortContext = {
+    jointPain: hasMeaningfulJointPain(recovery),
+    poorRecovery: hasPoorRecovery(recovery),
+    earlyPhase: (context.today.plan?.weekNumber ?? Infinity) <= 2,
+    adjacentOverlap: (context.today.adjacentMuscles?.length ?? 0) > 0,
+  };
+  const { effort, reason, note } = resolveEffort(requestedEffort, ctx);
+  return { effort, reason, note, allowedEfforts: allowedEffortsFor(requestedEffort) };
+}
+
+export interface ExtraSessionCandidate {
+  exerciseId: number;
+  name: string;
+  primaryMuscle: string;
+  equipment: string;
+}
+
+export interface ExtraSessionBuilderResult {
+  plan: { id: number; weekNumber: number; name: string };
+  ctx: EffortContext;
+  adjacentMuscles: string[];
+  weekExerciseIds: number[];
+  candidates: ExtraSessionCandidate[];
+}
+
+/**
+ * Shared context for both the deterministic and AI extra-session paths:
+ * loads the plan, recovery, adjacent-day muscle overlap and the curated
+ * candidate pool from the library. No prescription logic here.
+ */
+export async function buildExtraSessionContext(input: {
   userId: number;
   workoutPlanId: number;
   dayNumber: number;
-  requestedEffort: Effort;
-}): Promise<RestDayWorkout> {
-  const { userId, workoutPlanId, dayNumber, requestedEffort } = input;
+}): Promise<ExtraSessionBuilderResult> {
+  const { userId, workoutPlanId, dayNumber } = input;
 
   const [plan, recovery, plannedRows, library] = await Promise.all([
     db
@@ -139,44 +192,67 @@ export async function proposeRestDayWorkout(input: {
     weekExerciseIds.add(row.exerciseId);
   }
 
-  const adjacentMuscles = new Set<string>([
+  const adjacentMuscles = [
     ...(musclesByDay.get(dayNumber - 1) ?? []),
     ...(musclesByDay.get(dayNumber + 1) ?? []),
-  ]);
+  ];
 
   const ctx: EffortContext = {
     jointPain: hasMeaningfulJointPain(recovery),
     poorRecovery: hasPoorRecovery(recovery),
     earlyPhase: plan[0].weekNumber <= 2,
-    adjacentOverlap: adjacentMuscles.size > 0,
+    adjacentOverlap: adjacentMuscles.length > 0,
   };
 
-  const { effort, reason, note } = resolveEffort(requestedEffort, ctx);
-  const preset = PRESETS[effort];
-
-  // Prefer library exercises by name from the curated pool.
   const byName = new Map(library.map((ex) => [ex.name, ex]));
   const candidates = COMPLEMENTARY_POOL.filter(
-    (item) => byName.has(item.name) && !adjacentMuscles.has(item.muscle),
-  ).map((item) => byName.get(item.name)!);
-  const fallback = COMPLEMENTARY_POOL.filter(
-    (item) => byName.has(item.name) && !weekExerciseIds.has(byName.get(item.name)!.id),
-  ).map((item) => byName.get(item.name)!);
+    (item) => byName.has(item.name) && !adjacentMuscles.includes(item.muscle),
+  ).map((item) => {
+    const ex = byName.get(item.name)!;
+    return { exerciseId: ex.id, name: ex.name, primaryMuscle: ex.primaryMuscle, equipment: ex.equipment };
+  });
 
-  const picked: (typeof library)[number][] = [];
-  for (const ex of [...candidates, ...fallback]) {
-    if (picked.some((p) => p.id === ex.id)) continue;
-    picked.push(ex);
+  return {
+    plan: { id: plan[0].id, weekNumber: plan[0].weekNumber, name: plan[0].name },
+    ctx,
+    adjacentMuscles,
+    weekExerciseIds: [...weekExerciseIds],
+    candidates,
+  };
+}
+
+export async function proposeRestDayWorkout(input: {
+  userId: number;
+  workoutPlanId: number;
+  dayNumber: number;
+  requestedEffort: Effort;
+}): Promise<RestDayWorkout> {
+  const { userId, requestedEffort } = input;
+  const base = await buildExtraSessionContext(input);
+
+  const { effort, reason, note } = resolveEffort(requestedEffort, base.ctx);
+  const preset = PRESETS[effort];
+
+  const byName = new Map<string, typeof base.candidates[number]>();
+  for (const candidate of base.candidates) byName.set(candidate.name, candidate);
+
+  const candidates = base.candidates.filter((candidate) => !base.adjacentMuscles.includes(candidate.primaryMuscle));
+  const fallback = base.candidates.filter((candidate) => !base.weekExerciseIds.includes(candidate.exerciseId));
+
+  const picked: ExtraSessionCandidate[] = [];
+  for (const candidate of [...candidates, ...fallback]) {
+    if (picked.some((p) => p.exerciseId === candidate.exerciseId)) continue;
+    picked.push(candidate);
     if (picked.length >= preset.count) break;
   }
 
   const result: AddWorkoutExercise[] = [];
   for (let i = 0; i < picked.length; i++) {
-    const ex = picked[i];
-    const lastSets = await getLastCompletedSets(userId, ex.id);
+    const candidate = picked[i];
+    const lastSets = await getLastCompletedSets(userId, candidate.exerciseId);
     result.push({
-      exerciseId: ex.id,
-      name: ex.name,
+      exerciseId: candidate.exerciseId,
+      name: candidate.name,
       position: i + 1,
       targetSets: preset.sets,
       minReps: preset.minReps,

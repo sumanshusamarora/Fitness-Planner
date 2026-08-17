@@ -17,8 +17,10 @@ PostgreSQL.
 Phone → Tailscale → Next.js → PostgreSQL
 ```
 
-No passwords, no cloud, no AI. Profile selection is a lightweight browser/cookie
-handshake; all training decisions are deterministic and local.
+No passwords, no cloud. Profile selection is a lightweight browser/cookie
+handshake; training decisions are deterministic and local. An optional runtime
+AI coach can augment proposals when configured (see below) but never writes to
+your plan.
 
 ---
 
@@ -169,6 +171,7 @@ anything is written.
 | `npm run coach -- users` | List users                               |
 | `npm run coach -- propose --user U` | Create/read a reviewable weekly proposal |
 | `npm run coach -- approve ID --confirm --user U` | Explicitly apply an approved proposal |
+| `npm run coach:smoke` | One bounded AI-coach request (requires `OPEN_API_KEY`) |
 | `npm run exercises:source` | Scrape MuscleWiki → `data/external/musclewiki.jsonl` (offline, explicit) |
 | `npm run exercises:import -- <jsonl>` | Import a catalogue snapshot into `external_exercises` |
 | `npm run exercises:match` | Rank + preselect mappings (`--dry-run` to only inspect) |
@@ -303,6 +306,34 @@ creates the next `workout_plan`; applying it again returns the same plan.
 The repo-local Codex skill lives at `.agents/skills/fitness-week-planner`. It
 uses `npm run coach` rather than SQL and stops for material safety or adherence
 questions before approval.
+
+## Optional runtime AI coach
+
+When `OPEN_API_KEY` is set (and `NODE_ENV` is not `test`), the coach can
+augment first-week, next-week, and rest-day (extra-session) proposals with a
+GPT-5 reasoner (`lib/coach/reasoners/openai.ts`) behind the shared
+`CoachReasoner` interface. All runtime calls go through
+`lib/coach/ai/runCoach.ts` using the OpenAI Responses API with Zod structured
+outputs.
+
+The AI coach is **read-only**:
+
+- It only proposes. `applyProposal()` and `applyPlanAdjustment()` remain the
+  only write paths and still require explicit approval.
+- It selects only from the controlled candidate exercise set — it never invents
+  exercise IDs.
+- It cannot prescribe RPE 10 / failure, and a requested effort is treated as a
+  maximum (Light/Usual/Heavy are never silently upgraded).
+- Any missing key, API error, or invalid output falls back to the deterministic
+  engine automatically.
+
+Configuration lives in `lib/coach/ai/client.ts`: `OPEN_API_KEY` enables it and
+`OPENAI_COACH_MODEL` overrides the model (default `gpt-5`). Normal `npm test`
+and `npm run build` do not require the key; the manual smoke test does:
+
+```bash
+npm run coach:smoke
+```
 
 ## Recovery check
 

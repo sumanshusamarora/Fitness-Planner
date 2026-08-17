@@ -24,6 +24,8 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://fitness:fitness@db:5432/fitness
+      OPEN_API_KEY: ${OPEN_API_KEY:-}
+      OPENAI_COACH_MODEL: ${OPENAI_COACH_MODEL:-gpt-5}
     ports:
       - "8881:3000"
 

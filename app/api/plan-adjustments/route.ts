@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { workoutPlanDays } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { proposeRestDayWorkout, type Effort } from "@/lib/coach/restDay";
+import { proposeAddSession } from "@/lib/coach/addSession";
+import type { Effort } from "@/lib/coach/restDay";
 import { persistAdjustment, proposeMoveOrSwap } from "@/lib/schedule";
 import { currentUserOrNull } from "@/lib/session";
 
@@ -44,21 +45,14 @@ export async function POST(req: Request) {
       if (!day || day.workoutPlanId !== body.planId) {
         return NextResponse.json({ error: "Day not found." }, { status: 400 });
       }
-      const generated = await proposeRestDayWorkout({
+      const proposal = await proposeAddSession({
         userId: user.id,
         workoutPlanId: body.planId,
         dayNumber: day.dayNumber,
+        dayId: body.dayId,
         requestedEffort: body.effort,
       });
-      const stored = await persistAdjustment(user.id, body.planId, "add_rest_day_workout", {
-        kind: "add",
-        dayId: body.dayId,
-        effort: generated.effort,
-        title: generated.title,
-        reason: generated.reason,
-        note: generated.note,
-        exercises: generated.exercises,
-      });
+      const stored = await persistAdjustment(user.id, body.planId, "add_rest_day_workout", proposal);
       return NextResponse.json(stored);
     }
 

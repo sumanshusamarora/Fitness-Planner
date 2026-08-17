@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { formatWeight } from "@/lib/dates";
 import type { WeekDayView, WeekView } from "@/lib/week-view";
+import { CoachDecisionCard } from "./CoachDecisionCard";
 
 interface MoveSwapData {
   kind: "move" | "swap";
@@ -34,6 +35,10 @@ interface AddWorkoutData {
   reason: string;
   note: string | null;
   exercises: AddWorkoutExercise[];
+  aiMetadata?: { model: string };
+  aiRationale?: string[];
+  confidence?: string;
+  safetyFlags?: string[];
 }
 
 interface StoredAdjustment {
@@ -419,21 +424,37 @@ function SheetBody(props: {
   }
 
   const p = sheet.adjustment.proposal as AddWorkoutData;
+  const exerciseList = (
+    <div className="space-y-2">
+      {p.exercises.map((ex) => (
+        <div key={ex.exerciseId} className="flex items-center justify-between rounded-xl bg-zinc-800 px-3 py-2">
+          <span className="font-semibold">{ex.name}</span>
+          <span className="text-sm text-zinc-400">
+            {ex.targetSets} × {ex.minReps}–{ex.maxReps} · {formatWeight(ex.suggestedWeightKg)} kg
+          </span>
+        </div>
+      ))}
+    </div>
+  );
   return (
     <div>
       <SheetTitle>{p.title}</SheetTitle>
       <p className="mb-1 mt-1 text-sm text-zinc-400">{p.reason}</p>
       {p.note && <p className="mb-3 text-sm text-amber-300">{p.note}</p>}
-      <div className="my-3 space-y-2">
-        {p.exercises.map((ex) => (
-          <div key={ex.exerciseId} className="flex items-center justify-between rounded-xl bg-zinc-800 px-3 py-2">
-            <span className="font-semibold">{ex.name}</span>
-            <span className="text-sm text-zinc-400">
-              {ex.targetSets} × {ex.minReps}–{ex.maxReps} · {formatWeight(ex.suggestedWeightKg)} kg
-            </span>
-          </div>
-        ))}
-      </div>
+      {p.aiMetadata ? (
+        <div className="my-3">
+          <CoachDecisionCard
+            model={p.aiMetadata.model}
+            confidence={p.confidence}
+            rationale={p.aiRationale}
+            safetyFlags={p.safetyFlags}
+          >
+            {exerciseList}
+          </CoachDecisionCard>
+        </div>
+      ) : (
+        <div className="my-3">{exerciseList}</div>
+      )}
       <button
         type="button"
         disabled={props.busy}
