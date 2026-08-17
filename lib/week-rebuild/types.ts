@@ -31,6 +31,9 @@ export interface WeekFeedbackInput {
   freeText: string | null;
 }
 
+export type AddedDayEffortPreference = "coach_decide" | "light" | "normal";
+export type RebuildSessionEffort = "light" | "normal";
+
 export type RebuildDayStatus = "workout" | "rest";
 export type RebuildOverallAction =
   | "keep_plan"
@@ -54,7 +57,9 @@ export interface RebuildProposedDay {
   dateISO: string;
   status: RebuildDayStatus;
   existingDayId: number | null;
+  sessionEffort: RebuildSessionEffort | null;
   title: string | null;
+  rationale: string[];
   exercises: RebuildProposedExercise[];
 }
 

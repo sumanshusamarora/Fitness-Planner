@@ -178,7 +178,9 @@ const RebuildProposedDaySchema = z.object({
   dateISO: z.string().min(8).max(12),
   status: z.enum(["workout", "rest"]),
   existingDayId: z.number().int().positive().nullable(),
+  sessionEffort: z.enum(["light", "normal"]).nullable(),
   title: z.string().min(1).max(120).nullable(),
+  rationale: z.array(z.string().min(1).max(200)).max(3),
   exercises: z.array(RebuildProposedExerciseSchema).max(12),
 });
 
@@ -187,6 +189,11 @@ const RebuildPreservedDaySchema = z.object({
   dayNumber: z.number().int().min(1).max(7),
   dateISO: z.string().min(8).max(12),
   reason: z.enum(["completed", "in_progress"]),
+});
+
+const RebuildStateEntrySchema = z.object({
+  key: z.string().min(1).max(80),
+  value: z.string().min(1).max(200),
 });
 
 const RebuildChangeSchema = z.object({
@@ -203,9 +210,9 @@ const RebuildChangeSchema = z.object({
     "keep",
   ]),
   date: z.string().min(8).max(12),
-  exerciseId: z.number().int().positive().optional(),
-  before: z.record(z.string(), z.unknown()).optional(),
-  after: z.record(z.string(), z.unknown()).optional(),
+  exerciseId: z.number().int().positive().nullable(),
+  before: z.array(RebuildStateEntrySchema).max(16).nullable(),
+  after: z.array(RebuildStateEntrySchema).max(16).nullable(),
   reason: z.string().min(1).max(320),
 });
 
@@ -228,9 +235,9 @@ export const WeekRebuildProposalSchema = z.object({
       z.object({
         id: z.string().min(1).max(80),
         question: z.string().min(1).max(320),
-        reason: z.string().min(1).max(320).optional(),
+        reason: z.string().min(1).max(320).nullable(),
         options: z.array(z.string().min(1).max(120)).min(1).max(6),
-        required: z.boolean().optional(),
+        required: z.boolean(),
       }),
     )
     .max(3),

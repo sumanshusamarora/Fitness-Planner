@@ -1,4 +1,5 @@
 import type {
+  AddedDayEffortPreference,
   RebuildChange,
   RebuildDayContext,
   RebuildDayExercise,
@@ -21,6 +22,11 @@ const MIN_SETS = 1;
 const LIGHT_SESSION_SETS = 1;
 const LIGHT_SESSION_RPE = 5;
 
+function addedDayEffortPreference(value: unknown): AddedDayEffortPreference {
+  if (value === "light" || value === "normal" || value === "coach_decide") return value;
+  return "coach_decide";
+}
+
 function toProposedExercise(exercise: RebuildDayExercise): RebuildProposedExercise {
   return {
     exerciseId: exercise.exerciseId,
@@ -40,9 +46,15 @@ function snapshotDay(day: RebuildDayContext): RebuildProposedDay {
     dateISO: day.dateISO,
     status: day.isWorkout ? "workout" : "rest",
     existingDayId: day.dayId,
+    sessionEffort: null,
     title: day.isWorkout ? day.title : null,
+    rationale: [],
     exercises: day.isWorkout ? day.exercises.map(toProposedExercise) : [],
   };
+}
+
+function withRest(day: RebuildProposedDay): RebuildProposedDay {
+  return { ...day, status: "rest", title: null, sessionEffort: null, rationale: [], exercises: [] };
 }
 
 function reduceSets(day: RebuildProposedDay): RebuildProposedDay {
@@ -153,7 +165,7 @@ export function proposeWeekRebuildDeterministic(context: WeekRebuildContext): We
       workoutCount += 1;
       if (workoutCount > wanted) {
         changes.push({ type: "remove_session", date: day.dateISO, reason: "Fewer training days as requested." });
-        return { ...day, status: "rest" as const, title: null, exercises: [] };
+        return withRest(day);
       }
       return day;
     });
@@ -162,6 +174,7 @@ export function proposeWeekRebuildDeterministic(context: WeekRebuildContext): We
 
   if (reason === "too_few_days") {
     const extra = Number(String(details.additional_days ?? "+1").replace("+", "")) || 1;
+    const effortPref = addedDayEffortPreference(details.added_day_effort);
     const source = context.currentWeek.days.find((day) => day.isWorkout);
     if (source && context.recovery.poorRecovery) {
       summary = "Recovery is low right now, so no extra sessions were added.";
@@ -173,14 +186,75 @@ export function proposeWeekRebuildDeterministic(context: WeekRebuildContext): We
         targetRpe: LIGHT_SESSION_RPE,
         suggestedWeightKg: exercise.suggestedWeightKg,
       }));
+      const normalExercises = source.exercises.slice(0, 3).map((exercise) => ({
+        ...toProposedExercise(exercise),
+        sets: Math.max(1, Math.min(3, exercise.sets)),
+        targetRpe: Math.min(7, exercise.targetRpe),
+      }));
+      const workoutDayNumbers = new Set(
+        proposed.filter((day) => day.status === "workout").map((day) => day.dayNumber),
+      );
+
+      const chooseEffortForDay = (dayNumber: number, priorAddedCount: number): "light" | "normal" => {
+        const adjacent = workoutDayNumbers.has(dayNumber - 1) || workoutDayNumbers.has(dayNumber + 1);
+        if (effortPref === "light") return "light";
+        if (effortPref === "normal") return adjacent ? "light" : "normal";
+        if (adjacent) return "light";
+        return priorAddedCount === 0 ? "normal" : "light";
+      };
+
+      const spacingScore = (dayNumber: number): number => {
+        if (workoutDayNumbers.size === 0) return 7;
+        let min = 7;
+        for (const workoutDay of workoutDayNumbers) {
+          min = Math.min(min, Math.abs(workoutDay - dayNumber));
+        }
+        return min;
+      };
+
+      const selectedDayNumbers = new Set(
+        proposed
+          .filter((day) => day.status === "rest")
+          .slice()
+          .sort((a, b) => spacingScore(b.dayNumber) - spacingScore(a.dayNumber) || a.dayNumber - b.dayNumber)
+          .slice(0, extra)
+          .map((day) => day.dayNumber),
+      );
+
       let added = 0;
       proposed = proposed.map((day) => {
-        if (added >= extra || day.status !== "rest") return day;
+        if (day.status !== "rest" || !selectedDayNumbers.has(day.dayNumber)) return day;
         added += 1;
-        changes.push({ type: "add_session", date: day.dateISO, reason: "Additional light training day as requested." });
-        return { ...day, status: "workout" as const, title: "Light Session", exercises: lightExercises };
+        const effort = chooseEffortForDay(day.dayNumber, added - 1);
+        workoutDayNumbers.add(day.dayNumber);
+        const rationale =
+          effort === "light"
+            ? [
+                "Low-fatigue addition beside nearby training.",
+                "Prefers recoverable work over total stress.",
+              ]
+            : [
+                "Larger recovery window supports a normal session.",
+                "No close overlap that would force a lighter day.",
+              ];
+        changes.push({
+          type: "add_session",
+          date: day.dateISO,
+          reason:
+            effort === "light"
+              ? "Added a light session that protects recovery."
+              : "Added a normal session where recovery space allows.",
+        });
+        return {
+          ...day,
+          status: "workout" as const,
+          sessionEffort: effort,
+          title: effort === "light" ? "Light Session" : "Normal Session",
+          rationale,
+          exercises: effort === "light" ? lightExercises : normalExercises,
+        };
       });
-      summary = `Added ${added} conservative light session${added === 1 ? "" : "s"}.`;
+      summary = `Added ${added} session${added === 1 ? "" : "s"} with recoverability-aware effort.`;
     }
   }
 
@@ -206,10 +280,10 @@ export function proposeWeekRebuildDeterministic(context: WeekRebuildContext): We
             if (moved.dayNumber !== day.dayNumber) changes.push({ type: "move_day", date: day.dateISO, reason: "Moved onto an available day." });
             idx += 1;
           } else {
-            reassigned.push({ ...day, status: "rest", title: null, exercises: [] });
+            reassigned.push(withRest(day));
           }
         } else {
-          reassigned.push({ ...day, status: "rest", title: null, exercises: [] });
+          reassigned.push(withRest(day));
         }
       }
       proposed = reassigned;

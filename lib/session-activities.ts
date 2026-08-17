@@ -379,6 +379,145 @@ export async function logSessionSet(
   return set;
 }
 
+export interface UpdateSessionSetInput {
+  weightKg?: number;
+  reps?: number;
+  rpe?: number | null;
+  setType?: SetType;
+}
+
+export async function updateSessionSet(
+  userId: number,
+  sessionId: number,
+  setId: number,
+  input: UpdateSessionSetInput,
+) {
+  await requireInProgressSession(userId, sessionId);
+
+  const row = (
+    await db
+      .select({
+        setId: workoutSets.id,
+      })
+      .from(workoutSets)
+      .innerJoin(
+        workoutSessionExercises,
+        eq(workoutSets.workoutSessionExerciseId, workoutSessionExercises.id),
+      )
+      .where(
+        and(
+          eq(workoutSets.id, setId),
+          eq(workoutSessionExercises.workoutSessionId, sessionId),
+        ),
+      )
+      .limit(1)
+  )[0];
+  if (!row) {
+    throw new DomainError("Set not found.", "SET_NOT_FOUND", 404);
+  }
+
+  const [updated] = await db
+    .update(workoutSets)
+    .set({
+      ...(input.weightKg == null ? {} : { weightKg: input.weightKg }),
+      ...(input.reps == null ? {} : { reps: input.reps }),
+      ...(input.rpe === undefined ? {} : { rpe: input.rpe }),
+      ...(input.setType == null ? {} : { setType: input.setType }),
+    })
+    .where(eq(workoutSets.id, setId))
+    .returning();
+  return updated;
+}
+
+export async function removeSessionSet(
+  userId: number,
+  sessionId: number,
+  setId: number,
+) {
+  await requireInProgressSession(userId, sessionId);
+
+  const row = (
+    await db
+      .select({
+        setId: workoutSets.id,
+        sseId: workoutSessionExercises.id,
+      })
+      .from(workoutSets)
+      .innerJoin(
+        workoutSessionExercises,
+        eq(workoutSets.workoutSessionExerciseId, workoutSessionExercises.id),
+      )
+      .where(
+        and(
+          eq(workoutSets.id, setId),
+          eq(workoutSessionExercises.workoutSessionId, sessionId),
+        ),
+      )
+      .limit(1)
+  )[0];
+  if (!row) {
+    throw new DomainError("Set not found.", "SET_NOT_FOUND", 404);
+  }
+
+  await db.transaction(async (tx) => {
+    await tx.delete(workoutSets).where(eq(workoutSets.id, setId));
+    const remaining = await tx
+      .select({ id: workoutSets.id })
+      .from(workoutSets)
+      .where(eq(workoutSets.workoutSessionExerciseId, row.sseId))
+      .orderBy(asc(workoutSets.setNumber));
+
+    for (let i = 0; i < remaining.length; i++) {
+      await tx
+        .update(workoutSets)
+        .set({ setNumber: i + 1 })
+        .where(eq(workoutSets.id, remaining[i].id));
+    }
+  });
+}
+
+export async function removeAddedSessionExercise(
+  userId: number,
+  sessionId: number,
+  exerciseId: number,
+) {
+  await requireInProgressSession(userId, sessionId);
+
+  const sse = (
+    await db
+      .select()
+      .from(workoutSessionExercises)
+      .where(
+        and(
+          eq(workoutSessionExercises.workoutSessionId, sessionId),
+          eq(workoutSessionExercises.exerciseId, exerciseId),
+          eq(workoutSessionExercises.origin, "added"),
+        ),
+      )
+      .limit(1)
+  )[0];
+  if (!sse) {
+    throw new DomainError("Added exercise not found.", "EXERCISE_NOT_FOUND", 404);
+  }
+
+  const setCount = (
+    await db
+      .select({ c: count() })
+      .from(workoutSets)
+      .where(eq(workoutSets.workoutSessionExerciseId, sse.id))
+  )[0]?.c ?? 0;
+
+  if (setCount > 0 || sse.status !== "pending") {
+    throw new DomainError(
+      "This added exercise already has actual work and cannot be removed.",
+      "ADDED_EXERCISE_HAS_ACTUAL_WORK",
+      409,
+    );
+  }
+
+  await db.delete(workoutSessionExercises).where(eq(workoutSessionExercises.id, sse.id));
+}
+
 export interface SessionActivitySummary {
   workingResistanceSets: number;
   warmupSets: number;

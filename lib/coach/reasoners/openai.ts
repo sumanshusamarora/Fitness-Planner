@@ -424,6 +424,17 @@ export class OpenAICoachReasoner implements CoachReasoner {
       feedback: {
         primaryReason: result.decision.feedback.primaryReason as WeekRebuildProposal["feedback"]["primaryReason"],
       },
+      changes: result.decision.changes.map((change) => ({
+        ...change,
+        exerciseId: change.exerciseId ?? undefined,
+        before: toRecord(change.before),
+        after: toRecord(change.after),
+      })),
+      questions: result.decision.questions.map((question) => ({
+        ...question,
+        reason: question.reason ?? undefined,
+        required: question.required,
+      })),
       aiMetadata: result.metadata,
     };
     try {
@@ -477,4 +488,11 @@ function buildRebuildAIContext(context: WeekRebuildContext) {
     future: context.future,
     constraints: context.constraints,
   };
+}
+
+function toRecord(entries: { key: string; value: string }[] | null): Record<string, unknown> | undefined {
+  if (!entries || entries.length === 0) return undefined;
+  const out: Record<string, unknown> = {};
+  for (const entry of entries) out[entry.key] = entry.value;
+  return out;
 }

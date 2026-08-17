@@ -549,6 +549,7 @@ export interface SessionExerciseData {
   media: ExerciseMedia | null;
   externalReference: ExerciseExternalReference | null;
   loggedSets: {
+    id: number;
     setNumber: number;
     weightKg: number;
     reps: number;
@@ -718,6 +719,7 @@ export async function getActiveWorkoutData(
     const sets = input.sse
       ? await db
           .select({
+            id: workoutSets.id,
             setNumber: workoutSets.setNumber,
             weightKg: workoutSets.weightKg,
             reps: workoutSets.reps,

@@ -63,6 +63,11 @@ export const FOLLOW_UP_QUESTIONS: Record<WeekFeedbackReason, FollowUpQuestion[]>
       question: "How many additional training days would you realistically like?",
       options: ["+1", "+2"],
     },
+    {
+      id: "added_day_effort",
+      question: "How should the added days feel?",
+      options: ["coach_decide", "light", "normal"],
+    },
   ],
   sessions_too_long: [
     {

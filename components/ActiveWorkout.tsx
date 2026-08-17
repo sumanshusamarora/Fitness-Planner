@@ -8,11 +8,40 @@ import { Stepper } from "@/components/Stepper";
 import { ExerciseMedia, type ExerciseMediaData } from "@/components/ExerciseMedia";
 
 interface LoggedSet {
+  id: number;
   setNumber: number;
   weightKg: number;
   reps: number;
   rpe: number | null;
   setType: string;
+}
+
+interface SessionActivity {
+  id: number;
+  activityType: string;
+  activityRole: string;
+  nameSnapshot: string | null;
+  durationSeconds: number | null;
+  distanceMeters: number | null;
+  speed: number | null;
+  inclinePercent: number | null;
+  effortRpe: number | null;
+  notes: string | null;
+}
+
+function normalizeActivity(input: Partial<SessionActivity>): SessionActivity {
+  return {
+    id: Number(input.id ?? 0),
+    activityType: String(input.activityType ?? "other"),
+    activityRole: String(input.activityRole ?? "other"),
+    nameSnapshot: input.nameSnapshot ?? null,
+    durationSeconds: input.durationSeconds == null ? null : Number(input.durationSeconds),
+    distanceMeters: input.distanceMeters == null ? null : Number(input.distanceMeters),
+    speed: input.speed == null ? null : Number(input.speed),
+    inclinePercent: input.inclinePercent == null ? null : Number(input.inclinePercent),
+    effortRpe: input.effortRpe == null ? null : Number(input.effortRpe),
+    notes: input.notes ?? null,
+  };
 }
 
 type ExerciseStatus = "pending" | "completed" | "skipped" | "not_attempted" | "replaced";
@@ -129,6 +158,22 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
   const [replaceReason, setReplaceReason] = useState<string | null>(null);
   const [replaceQuery, setReplaceQuery] = useState("");
   const [replaceResults, setReplaceResults] = useState<{ id: number; name: string; primaryMuscle: string }[]>([]);
+  const [setMenu, setSetMenu] = useState<LoggedSet | null>(null);
+  const [setEditor, setSetEditor] = useState<LoggedSet | null>(null);
+  const [setEditorWeight, setSetEditorWeight] = useState(0);
+  const [setEditorReps, setSetEditorReps] = useState(0);
+  const [setEditorRpe, setSetEditorRpe] = useState<number | null>(null);
+  const [setEditorType, setSetEditorType] = useState<"warmup" | "working">("working");
+  const [activities, setActivities] = useState<SessionActivity[]>([]);
+  const [activityMenu, setActivityMenu] = useState<SessionActivity | null>(null);
+  const [activityEditor, setActivityEditor] = useState<SessionActivity | null>(null);
+  const [activityName, setActivityName] = useState("");
+  const [activityMinutesDraft, setActivityMinutesDraft] = useState(10);
+  const [activityEffortDraft, setActivityEffortDraft] = useState<number | "">("");
+  const [activityDistanceDraft, setActivityDistanceDraft] = useState<number | "">("");
+  const [activitySpeedDraft, setActivitySpeedDraft] = useState<number | "">("");
+  const [activityInclineDraft, setActivityInclineDraft] = useState<number | "">("");
+  const [activityNotesDraft, setActivityNotesDraft] = useState("");
 
   const exercisesRef = useRef(exercises);
   const indexRef = useRef(index);
@@ -136,6 +181,25 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
     exercisesRef.current = exercises;
     indexRef.current = index;
   }, [exercises, index]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadActivities() {
+      const res = await fetch(`/api/sessions/${sessionId}/activities`);
+      const data = await res.json().catch(() => ({}));
+      if (!cancelled) {
+        setActivities(
+          Array.isArray(data.activities)
+            ? data.activities.map((item: Partial<SessionActivity>) => normalizeActivity(item))
+            : [],
+        );
+      }
+    }
+    void loadActivities();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
 
   useEffect(() => {
     if (phase !== "rest") return;
@@ -207,14 +271,18 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
         }),
       });
       if (!res.ok) throw new Error("save failed");
+      const payload = (await res.json().catch(() => ({}))) as {
+        set?: { id: number; setNumber: number; weightKg: number; reps: number; rpe: number | null; setType: string };
+      };
 
       const isLastSet = !warmup && workingCount + 1 >= ex.targetSets;
       const newSet: LoggedSet = {
-        setNumber: ex.loggedSets.length + 1,
-        weightKg: isWeighted ? draft.weight : 0,
-        reps: draft.reps,
-        rpe,
-        setType,
+        id: payload.set?.id ?? Date.now(),
+        setNumber: payload.set?.setNumber ?? ex.loggedSets.length + 1,
+        weightKg: payload.set?.weightKg ?? (isWeighted ? draft.weight : 0),
+        reps: payload.set?.reps ?? draft.reps,
+        rpe: payload.set?.rpe ?? rpe,
+        setType: payload.set?.setType ?? setType,
       };
       setExercises((prev) =>
         prev.map((e, i) =>
@@ -311,7 +379,7 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
     const type = activityKind === "mobility" ? "mobility" : activityKind === "cooldown" ? "stretching" : "cardio";
     const role = activityKind === "warmup" ? "warmup" : activityKind === "cooldown" ? "cooldown" : activityKind === "mobility" ? "mobility" : "cardio";
     setSaving(true);
-    await fetch(`/api/sessions/${sessionId}/activities`, {
+    const res = await fetch(`/api/sessions/${sessionId}/activities`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -322,10 +390,173 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
         effortRpe: null,
       }),
     });
+    if (res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { activity?: SessionActivity };
+      if (data.activity) setActivities((prev) => [...prev, normalizeActivity(data.activity as SessionActivity)]);
+    }
     setSaving(false);
     setAddActivityOpen(false);
     setActivityKind(null);
     setActivityMinutes(10);
+  }
+
+  function openSetEditor(set: LoggedSet) {
+    setSetEditor(set);
+    setSetEditorWeight(set.weightKg);
+    setSetEditorReps(set.reps);
+    setSetEditorRpe(set.rpe);
+    setSetEditorType(set.setType === "warmup" ? "warmup" : "working");
+  }
+
+  async function saveSetEdit() {
+    if (!setEditor) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/sets/${setEditor.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          weightKg: setEditorWeight,
+          reps: setEditorReps,
+          rpe: setEditorRpe,
+          setType: setEditorType,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        set?: { id: number; setNumber: number; weightKg: number; reps: number; rpe: number | null; setType: string };
+      };
+      if (!res.ok || !data.set) throw new Error(data.error ?? "Could not edit this set.");
+
+      setExercises((prev) =>
+        prev.map((exercise, i) =>
+          i === index
+            ? {
+                ...exercise,
+                loggedSets: exercise.loggedSets.map((set) =>
+                  set.id === setEditor.id
+                    ? {
+                        ...set,
+                        weightKg: data.set!.weightKg,
+                        reps: data.set!.reps,
+                        rpe: data.set!.rpe,
+                        setType: data.set!.setType,
+                      }
+                    : set,
+                ),
+              }
+            : exercise,
+        ),
+      );
+      setSetEditor(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not edit this set.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeSetById(setId: number) {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/sets/${setId}`, { method: "DELETE" });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Could not remove this set.");
+
+      setExercises((prev) =>
+        prev.map((exercise, i) => {
+          if (i !== index) return exercise;
+          const kept = exercise.loggedSets.filter((set) => set.id !== setId);
+          return {
+            ...exercise,
+            loggedSets: kept.map((set, idx) => ({ ...set, setNumber: idx + 1 })),
+            status: "pending",
+          };
+        }),
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not remove this set.");
+    } finally {
+      setSaving(false);
+      setSetMenu(null);
+    }
+  }
+
+  function openActivityEditor(activity: SessionActivity) {
+    setActivityEditor(activity);
+    setActivityName(activity.nameSnapshot ?? "");
+    setActivityMinutesDraft(Math.max(1, Math.round((activity.durationSeconds ?? 600) / 60)));
+    setActivityEffortDraft(activity.effortRpe ?? "");
+    setActivityDistanceDraft(activity.distanceMeters ?? "");
+    setActivitySpeedDraft(activity.speed ?? "");
+    setActivityInclineDraft(activity.inclinePercent ?? "");
+    setActivityNotesDraft(activity.notes ?? "");
+  }
+
+  async function saveActivityEdit() {
+    if (!activityEditor) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/activities/${activityEditor.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nameSnapshot: activityName || null,
+          durationSeconds: Math.max(1, activityMinutesDraft) * 60,
+          effortRpe: activityEffortDraft === "" ? null : Number(activityEffortDraft),
+          distanceMeters: activityDistanceDraft === "" ? null : Number(activityDistanceDraft),
+          speed: activitySpeedDraft === "" ? null : Number(activitySpeedDraft),
+          inclinePercent: activityInclineDraft === "" ? null : Number(activityInclineDraft),
+          notes: activityNotesDraft || null,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string; activity?: SessionActivity };
+      if (!res.ok || !data.activity) throw new Error(data.error ?? "Could not update activity.");
+
+      setActivities((prev) => prev.map((item) => (item.id === activityEditor.id ? normalizeActivity(data.activity as SessionActivity) : item)));
+      setActivityEditor(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update activity.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeActivityById(activityId: number) {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/activities/${activityId}`, { method: "DELETE" });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Could not remove activity.");
+      setActivities((prev) => prev.filter((item) => item.id !== activityId));
+      setActivityMenu(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not remove activity.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeAddedExercise() {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/exercises/${ex.exerciseId}/remove-added`, {
+        method: "DELETE",
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Could not remove this added exercise.");
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not remove this added exercise.");
+    } finally {
+      setSaving(false);
+      setMenuOpen(false);
+    }
   }
 
   async function searchReplace(query: string) {
@@ -511,6 +742,28 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
               )}
             </div>
 
+            {ex.loggedSets.length > 0 && (
+              <div className="mt-4 space-y-2 rounded-2xl bg-zinc-800/50 p-4">
+                <p className="text-xs uppercase tracking-widest text-zinc-400">Logged sets</p>
+                {ex.loggedSets.map((set) => (
+                  <div key={set.id} className="flex items-center justify-between rounded-xl bg-zinc-900 px-3 py-2 text-sm">
+                    <span>
+                      Set {set.setNumber} · {set.setType === "warmup" ? "Warm-up" : "Working"} · {formatWeight(set.weightKg)} kg × {set.reps}
+                      {set.rpe != null && ` @ RPE ${set.rpe}`}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setSetMenu(set)}
+                      className="h-10 w-10 rounded-xl bg-zinc-800 text-zinc-300"
+                      aria-label="Set options"
+                    >
+                      •••
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {ex.origin === "replacement" && ex.replacesName && (
               <div className="mt-4 rounded-2xl border border-violet-500/30 bg-violet-500/10 p-4">
                 <p className="text-sm text-violet-300">
@@ -638,12 +891,22 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
             )}
           </p>
           {ex.loggedSets.length > 0 && (
-            <div className="mt-4 space-y-1 text-zinc-300">
+            <div className="mt-4 space-y-2 text-zinc-300">
               {ex.loggedSets.map((s) => (
-                <p key={s.setNumber}>
-                  {formatWeight(s.weightKg)} kg × {s.reps}
-                  {s.rpe != null && ` @ RPE ${s.rpe}`}
-                </p>
+                <div key={s.id} className="flex items-center justify-between rounded-xl bg-zinc-800 px-3 py-2 text-sm">
+                  <span>
+                    Set {s.setNumber} · {s.setType === "warmup" ? "Warm-up" : "Working"} · {formatWeight(s.weightKg)} kg × {s.reps}
+                    {s.rpe != null && ` @ RPE ${s.rpe}`}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSetMenu(s)}
+                    className="h-10 w-10 rounded-xl bg-zinc-900 text-zinc-300"
+                    aria-label="Set options"
+                  >
+                    •••
+                  </button>
+                </div>
               ))}
             </div>
           )}
@@ -678,6 +941,30 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
         >
           FINISH WORKOUT
         </button>
+      )}
+
+      {activities.length > 0 && (
+        <section className="mt-5 rounded-3xl border border-zinc-800 bg-zinc-900 p-5">
+          <h2 className="mb-3 text-xl font-bold">Activities</h2>
+          <div className="space-y-2">
+            {activities.map((activity) => (
+              <div key={activity.id} className="flex items-center justify-between rounded-xl bg-zinc-800 px-3 py-3 text-sm">
+                <span>
+                  {(activity.nameSnapshot ?? roleLabel(activity.activityRole)) || "Activity"}
+                  {activity.durationSeconds != null && ` · ${Math.max(1, Math.round(activity.durationSeconds / 60))} min`}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setActivityMenu(activity)}
+                  className="h-10 w-10 rounded-xl bg-zinc-900 text-zinc-300"
+                  aria-label="Activity options"
+                >
+                  •••
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
 
       {/* Sticky navigation */}
@@ -755,6 +1042,11 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
             {ex.origin === "planned" && ex.status === "pending" && (
               <SheetButton onClick={() => { setMenuOpen(false); setSkipOpen(true); }}>
                 Skip exercise
+              </SheetButton>
+            )}
+            {ex.origin === "added" && ex.status === "pending" && ex.loggedSets.length === 0 && (
+              <SheetButton onClick={() => void removeAddedExercise()}>
+                Remove added exercise
               </SheetButton>
             )}
             <SheetButton onClick={() => { setMenuOpen(false); setFinishOpen(true); }}>
@@ -919,6 +1211,127 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
           )}
         </Overlay>
       )}
+
+      {setMenu && (
+        <Overlay onClose={() => setSetMenu(null)}>
+          <h2 className="mb-3 text-2xl font-bold">Set {setMenu.setNumber}</h2>
+          <div className="space-y-2">
+            <SheetButton
+              onClick={() => {
+                openSetEditor(setMenu);
+                setSetMenu(null);
+              }}
+            >
+              Edit set
+            </SheetButton>
+            <SheetButton onClick={() => void removeSetById(setMenu.id)}>Remove set</SheetButton>
+          </div>
+          <CloseRow onClose={() => setSetMenu(null)} />
+        </Overlay>
+      )}
+
+      {setEditor && (
+        <Overlay onClose={() => setSetEditor(null)}>
+          <h2 className="mb-3 text-2xl font-bold">Edit set</h2>
+          <div className="space-y-4">
+            <Stepper
+              label="Weight"
+              value={setEditorWeight}
+              step={smallestIncrement(setEditorWeight) || 2.5}
+              unit="kg"
+              format={formatWeight}
+              onChange={setSetEditorWeight}
+            />
+            <Stepper
+              label={measurement === "timed_hold" ? "Seconds" : "Reps"}
+              value={setEditorReps}
+              step={measurement === "timed_hold" ? 5 : 1}
+              unit={measurement === "timed_hold" ? "sec" : "reps"}
+              onChange={setSetEditorReps}
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setSetEditorType("warmup")}
+                className={`rounded-2xl py-3 text-sm font-semibold ${setEditorType === "warmup" ? "bg-emerald-500 text-zinc-950" : "bg-zinc-800 text-zinc-100"}`}
+              >
+                Warm-up
+              </button>
+              <button
+                type="button"
+                onClick={() => setSetEditorType("working")}
+                className={`rounded-2xl py-3 text-sm font-semibold ${setEditorType === "working" ? "bg-emerald-500 text-zinc-950" : "bg-zinc-800 text-zinc-100"}`}
+              >
+                Working
+              </button>
+            </div>
+            <div>
+              <p className="mb-2 text-sm text-zinc-400">RPE</p>
+              <div className="grid grid-cols-3 gap-2">
+                {RPE_OPTIONS.map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setSetEditorRpe(value)}
+                    className={`rounded-xl py-2 text-lg font-bold ${setEditorRpe === value ? "bg-emerald-500 text-zinc-950" : "bg-zinc-800 text-zinc-100"}`}
+                  >
+                    {value}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <SheetButton primary onClick={() => void saveSetEdit()}>Save set</SheetButton>
+            <CloseRow onClose={() => setSetEditor(null)} />
+          </div>
+        </Overlay>
+      )}
+
+      {activityMenu && (
+        <Overlay onClose={() => setActivityMenu(null)}>
+          <h2 className="mb-3 text-2xl font-bold">Activity</h2>
+          <div className="space-y-2">
+            <SheetButton
+              onClick={() => {
+                openActivityEditor(activityMenu);
+                setActivityMenu(null);
+              }}
+            >
+              Edit
+            </SheetButton>
+            <SheetButton onClick={() => void removeActivityById(activityMenu.id)}>Remove</SheetButton>
+          </div>
+          <CloseRow onClose={() => setActivityMenu(null)} />
+        </Overlay>
+      )}
+
+      {activityEditor && (
+        <Overlay onClose={() => setActivityEditor(null)}>
+          <h2 className="mb-3 text-2xl font-bold">Edit activity</h2>
+          <div className="space-y-3">
+            <input
+              value={activityName}
+              onChange={(e) => setActivityName(e.target.value)}
+              placeholder="Name"
+              className="w-full rounded-2xl border border-zinc-700 bg-zinc-800 p-3 text-zinc-100"
+            />
+            <div className="flex items-center justify-between gap-3 rounded-2xl bg-zinc-800 p-3">
+              <span className="text-sm text-zinc-300">Duration (min)</span>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => setActivityMinutesDraft((m) => Math.max(1, m - 1))} className="h-10 w-10 rounded-xl bg-zinc-900">−</button>
+                <span className="w-10 text-center font-semibold tabular-nums">{activityMinutesDraft}</span>
+                <button type="button" onClick={() => setActivityMinutesDraft((m) => m + 1)} className="h-10 w-10 rounded-xl bg-zinc-900">+</button>
+              </div>
+            </div>
+            <input value={activityEffortDraft} onChange={(e) => setActivityEffortDraft(e.target.value === "" ? "" : Number(e.target.value))} placeholder="Effort RPE (optional)" className="w-full rounded-2xl border border-zinc-700 bg-zinc-800 p-3 text-zinc-100" />
+            <input value={activityDistanceDraft} onChange={(e) => setActivityDistanceDraft(e.target.value === "" ? "" : Number(e.target.value))} placeholder="Distance meters (optional)" className="w-full rounded-2xl border border-zinc-700 bg-zinc-800 p-3 text-zinc-100" />
+            <input value={activitySpeedDraft} onChange={(e) => setActivitySpeedDraft(e.target.value === "" ? "" : Number(e.target.value))} placeholder="Speed (optional)" className="w-full rounded-2xl border border-zinc-700 bg-zinc-800 p-3 text-zinc-100" />
+            <input value={activityInclineDraft} onChange={(e) => setActivityInclineDraft(e.target.value === "" ? "" : Number(e.target.value))} placeholder="Incline % (optional)" className="w-full rounded-2xl border border-zinc-700 bg-zinc-800 p-3 text-zinc-100" />
+            <textarea value={activityNotesDraft} onChange={(e) => setActivityNotesDraft(e.target.value)} placeholder="Notes (optional)" rows={2} className="w-full rounded-2xl border border-zinc-700 bg-zinc-800 p-3 text-zinc-100" />
+            <SheetButton primary onClick={() => void saveActivityEdit()}>Save</SheetButton>
+            <CloseRow onClose={() => setActivityEditor(null)} />
+          </div>
+        </Overlay>
+      )}
     </div>
   );
 }
@@ -944,6 +1357,14 @@ function reasonLabel(key: string) {
   return all.find((r) => r.key === key)?.label ?? key;
 }
 
+function roleLabel(role: string) {
+  if (role === "warmup") return "Warm-up";
+  if (role === "cooldown") return "Cool-down";
+  if (role === "mobility") return "Mobility";
+  if (role === "cardio") return "Cardio";
+  return "Activity";
+}
+
 function Overlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
   return (
     <div
@@ -952,6 +1373,7 @@ function Overlay({ children, onClose }: { children: React.ReactNode; onClose: ()
     >
       <div
         className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-t-3xl border-t border-zinc-800 bg-zinc-900 p-5 pb-8"
+        style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 2rem)" }}
         onClick={(e) => e.stopPropagation()}
       >
         {children}

@@ -65,8 +65,13 @@ planning.
 - **ADDING a workout** creates new training stress and requires coaching
   analysis: adjacent-session overlap, muscle/movement exposure, volume, recovery,
   pain, phase, and adherence. An extra session should complement the week, not
-  repeat it. Default to Light; downgrade a Heavy request when recovery, pain,
-  phase, or overlap make it inappropriate.
+  repeat it. When the user sets added-day effort:
+  - `light` is a maximum (coach may choose Light or Rest, never upgrade to Normal);
+  - `normal` allows Normal but may be downgraded to Light/Rest from context;
+  - `coach_decide` lets the coach pick per day.
+  Light does not simply mean lighter weight: it can reduce fatigue via fewer
+  exercises/sets, shorter sessions, lower RPE, less overlap, or more
+  mobility/cardio emphasis.
 
 ## First-week vs next-week
 

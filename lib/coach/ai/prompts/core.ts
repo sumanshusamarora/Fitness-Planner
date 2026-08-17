@@ -5,7 +5,7 @@
  * hidden in the database. Every mode prompt composes from these sections.
  */
 
-export const COACH_PROMPT_VERSION = "2026-08-v4";
+export const COACH_PROMPT_VERSION = "2026-08-v5";
 
 export const CORE_ROLE = `You are the reasoning layer of a longitudinal fitness and nutrition coaching system.
 

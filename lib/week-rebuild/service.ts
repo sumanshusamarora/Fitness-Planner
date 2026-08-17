@@ -22,6 +22,7 @@ export interface StoredWeekRebuild {
   id: number;
   status: string;
   proposal: WeekRebuildProposal;
+  coachSource: "gpt5" | "fallback";
   feedbackId: number | null;
   diff: ReturnType<typeof computeWeekRebuildDiff>;
 }
@@ -142,7 +143,14 @@ export async function proposeWeekRebuild(input: {  userId: number;
     .returning();
 
   const diff = computeWeekRebuildDiff(context.currentWeek.days, proposal.proposedDays);
-  return { id: row.id, status: row.status, proposal, feedbackId, diff };
+  return {
+    id: row.id,
+    status: row.status,
+    proposal,
+    coachSource: proposal.aiMetadata?.model ? "gpt5" : "fallback",
+    feedbackId,
+    diff,
+  };
 }
 
 export async function getWeekRebuildProposal(
@@ -173,6 +181,7 @@ export async function getWeekRebuildProposal(
     id: row.id,
     status: row.status,
     proposal,
+    coachSource: proposal.aiMetadata?.model ? "gpt5" : "fallback",
     feedbackId: row.feedbackId,
     diff,
   };
@@ -250,7 +259,14 @@ export async function respondToWeekRebuild(
     })
     .where(eq(planAdjustmentProposals.id, proposalId));
 
-  return { id: row.id, status: proposal.questions.length ? "awaiting_input" : "draft", proposal, feedbackId: row.feedbackId, diff: computeWeekRebuildDiff(context.currentWeek.days, proposal.proposedDays) };
+  return {
+    id: row.id,
+    status: proposal.questions.length ? "awaiting_input" : "draft",
+    proposal,
+    coachSource: proposal.aiMetadata?.model ? "gpt5" : "fallback",
+    feedbackId: row.feedbackId,
+    diff: computeWeekRebuildDiff(context.currentWeek.days, proposal.proposedDays),
+  };
 }
 
 /**

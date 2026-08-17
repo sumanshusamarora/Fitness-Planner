@@ -52,7 +52,7 @@ export async function POST(
       setType,
     });
 
-    return NextResponse.json({ setId: set.id });
+    return NextResponse.json({ set });
   } catch (error) {
     const mapped = toErrorBody(error, "Could not save this set.", 404);
     return NextResponse.json(mapped.body, { status: mapped.status });

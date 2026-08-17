@@ -262,8 +262,8 @@ test("poor recovery reduces volume", () => {
 test("diff reports removed sessions and set-volume change", () => {
   const currentDays = [day({ dayId: 3, dayNumber: 3 }), day({ dayId: 5, dayNumber: 5 })];
   const proposedDays: WeekRebuildProposal["proposedDays"] = [
-    { dayNumber: 3, dateISO: "2026-08-19", status: "workout", existingDayId: 3, title: "Full Body A", exercises: [proposedExercise(1)] },
-    { dayNumber: 5, dateISO: "2026-08-21", status: "rest", existingDayId: 5, title: null, exercises: [] },
+    { dayNumber: 3, dateISO: "2026-08-19", status: "workout", existingDayId: 3, sessionEffort: null, title: "Full Body A", rationale: [], exercises: [proposedExercise(1)] },
+    { dayNumber: 5, dateISO: "2026-08-21", status: "rest", existingDayId: 5, sessionEffort: null, title: null, rationale: [], exercises: [] },
   ];
   const diff = computeWeekRebuildDiff(currentDays, proposedDays);
   assert.equal(diff.sessionsBefore, 2);
@@ -289,8 +289,8 @@ test("validation rejects proposals that modify completed history", () => {
     rationale: [],
     preservedDays: [{ dayId: 1, dayNumber: 1, dateISO: "2026-08-17", reason: "completed" }],
     proposedDays: [
-      { dayNumber: 1, dateISO: "2026-08-17", status: "rest", existingDayId: 1, title: null, exercises: [] },
-      { dayNumber: 3, dateISO: "2026-08-19", status: "workout", existingDayId: 3, title: "Full Body A", exercises: [proposedExercise(1)] },
+      { dayNumber: 1, dateISO: "2026-08-17", status: "rest", existingDayId: 1, sessionEffort: null, title: null, rationale: [], exercises: [] },
+      { dayNumber: 3, dateISO: "2026-08-19", status: "workout", existingDayId: 3, sessionEffort: null, title: "Full Body A", rationale: [], exercises: [proposedExercise(1)] },
     ],
     changes: [],
     questions: [],
@@ -298,4 +298,85 @@ test("validation rejects proposals that modify completed history", () => {
     methodologyVersion: "test",
   };
   assert.throws(() => validateWeekRebuildProposal(proposal, ctx), /immutable day/);
+});
+
+test("week rebuild accepts added day effort preferences coach_decide/light/normal", () => {
+  const baseDays = [
+    day({ dayId: 1, dayNumber: 1, dateISO: "2026-08-17", isWorkout: true }),
+    day({ dayId: 2, dayNumber: 2, dateISO: "2026-08-18", isWorkout: false, exercises: [], title: "Rest" }),
+    day({ dayId: 4, dayNumber: 4, dateISO: "2026-08-20", isWorkout: false, exercises: [], title: "Rest" }),
+    day({ dayId: 6, dayNumber: 6, dateISO: "2026-08-22", isWorkout: false, exercises: [], title: "Rest" }),
+  ];
+
+  for (const added_day_effort of ["coach_decide", "light", "normal"]) {
+    const ctx = context({
+      feedback: feedback("too_few_days", { additional_days: "+1", added_day_effort }),
+      currentWeek: { days: baseDays } as WeekRebuildContext["currentWeek"],
+    });
+    const proposal = proposeWeekRebuildDeterministic(ctx);
+    const added = proposal.proposedDays.filter((d) => d.status === "workout" && d.existingDayId !== 1);
+    assert.ok(added.length >= 1);
+  }
+});
+
+test("light effort request cannot be upgraded to normal", () => {
+  const days = [
+    day({ dayId: 1, dayNumber: 1, dateISO: "2026-08-17", isWorkout: true }),
+    day({ dayId: 2, dayNumber: 2, dateISO: "2026-08-18", isWorkout: false, exercises: [], title: "Rest" }),
+    day({ dayId: 5, dayNumber: 5, dateISO: "2026-08-21", isWorkout: false, exercises: [], title: "Rest" }),
+  ];
+  const proposal = proposeWeekRebuildDeterministic(
+    context({
+      feedback: feedback("too_few_days", { additional_days: "+2", added_day_effort: "light" }),
+      currentWeek: { days } as WeekRebuildContext["currentWeek"],
+    }),
+  );
+  const addedEfforts = proposal.proposedDays
+    .filter((d) => d.status === "workout" && d.existingDayId !== 1)
+    .map((d) => d.sessionEffort);
+  assert.ok(addedEfforts.every((effort) => effort === "light"));
+});
+
+test("normal request may downgrade to light based on adjacency", () => {
+  const days = [
+    day({ dayId: 1, dayNumber: 1, dateISO: "2026-08-17", isWorkout: true }),
+    day({ dayId: 2, dayNumber: 2, dateISO: "2026-08-18", isWorkout: false, exercises: [], title: "Rest" }),
+  ];
+  const proposal = proposeWeekRebuildDeterministic(
+    context({
+      feedback: feedback("too_few_days", { additional_days: "+1", added_day_effort: "normal" }),
+      currentWeek: { days } as WeekRebuildContext["currentWeek"],
+    }),
+  );
+  const added = proposal.proposedDays.find((d) => d.status === "workout" && d.existingDayId !== 1);
+  assert.equal(added?.sessionEffort, "light");
+});
+
+test("coach_decide may choose different effort levels per added day", () => {
+  const days = [
+    day({ dayId: 1, dayNumber: 1, dateISO: "2026-08-17", isWorkout: true }),
+    day({ dayId: 2, dayNumber: 2, dateISO: "2026-08-18", isWorkout: false, exercises: [], title: "Rest" }),
+    day({ dayId: 4, dayNumber: 4, dateISO: "2026-08-20", isWorkout: false, exercises: [], title: "Rest" }),
+    day({ dayId: 6, dayNumber: 6, dateISO: "2026-08-22", isWorkout: false, exercises: [], title: "Rest" }),
+  ];
+  const proposal = proposeWeekRebuildDeterministic(
+    context({
+      feedback: feedback("too_few_days", { additional_days: "+2", added_day_effort: "coach_decide" }),
+      currentWeek: { days } as WeekRebuildContext["currentWeek"],
+    }),
+  );
+  const efforts = new Set(
+    proposal.proposedDays
+      .filter((d) => d.status === "workout" && d.existingDayId !== 1)
+      .map((d) => d.sessionEffort),
+  );
+  assert.ok(efforts.has("light"));
+  assert.ok(efforts.has("normal"));
+});
+
+test("rest days always carry null sessionEffort", () => {
+  const proposal = proposeWeekRebuildDeterministic(context({ feedback: feedback("too_many_days", { target_days: "1" }) }));
+  for (const day of proposal.proposedDays) {
+    if (day.status === "rest") assert.equal(day.sessionEffort, null);
+  }
 });

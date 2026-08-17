@@ -25,9 +25,12 @@ import {
   addUnplannedExercise,
   buildRecentActualSummary,
   buildSessionActivitySummary,
+  removeAddedSessionExercise,
+  removeSessionSet,
   removeSessionActivity,
   replaceSessionExercise,
   restoreSessionExercise,
+  updateSessionSet,
   updateSessionActivity,
 } from "@/lib/session-activities";
 
@@ -203,6 +206,115 @@ test("activities support add/update/remove and do not enter resistance analytics
   assert.equal(after.length, 1);
 });
 
+test("in-progress set correction allows edit/remove; terminal sessions reject set mutation", async () => {
+  const stamp = Date.now();
+  const [u] = await db.insert(users).values({ name: `Act H ${stamp}`, username: `act-h-${stamp}`, usernameNormalized: `act-h-${stamp}` }).returning();
+  a.userId = u.id;
+  a.planId = (await createInitialWeek(u.id))!;
+
+  const day = await db.select().from(workoutPlanDays).where(and(eq(workoutPlanDays.workoutPlanId, a.planId), eq(workoutPlanDays.dayNumber, 1))).limit(1);
+  const ex = await db.select().from(workoutPlanExercises).where(eq(workoutPlanExercises.workoutPlanDayId, day[0].id)).limit(1);
+  const sessionId = await startSession(u.id, a.planId, 1);
+
+  const sse = await db.select().from(workoutSessionExercises).where(and(eq(workoutSessionExercises.workoutSessionId, sessionId), eq(workoutSessionExercises.exerciseId, ex[0].exerciseId))).limit(1);
+  const [set] = await db.insert(workoutSets).values({ workoutSessionExerciseId: sse[0].id, setNumber: 1, weightKg: 40, reps: 10, rpe: 6, setType: "working" }).returning();
+
+  const edited = await updateSessionSet(u.id, sessionId, set.id, { weightKg: 42.5, reps: 11, rpe: 7, setType: "working" });
+  assert.equal(edited.weightKg, 42.5);
+  assert.equal(edited.reps, 11);
+
+  await removeSessionSet(u.id, sessionId, set.id);
+  const afterRemove = await db.select().from(workoutSets).where(eq(workoutSets.workoutSessionExerciseId, sse[0].id));
+  assert.equal(afterRemove.length, 0);
+
+  const [set2] = await db.insert(workoutSets).values({ workoutSessionExerciseId: sse[0].id, setNumber: 1, weightKg: 45, reps: 10, rpe: 7, setType: "working" }).returning();
+  await finishSession(u.id, sessionId, {});
+
+  await assert.rejects(
+    () => updateSessionSet(u.id, sessionId, set2.id, { reps: 8 }),
+    /finalised/,
+  );
+  await assert.rejects(
+    () => removeSessionSet(u.id, sessionId, set2.id),
+    /finalised/,
+  );
+});
+
+test("activity correction allows edit/remove in progress and rejects mutation after completion", async () => {
+  const stamp = Date.now();
+  const [u] = await db.insert(users).values({ name: `Act I ${stamp}`, username: `act-i-${stamp}`, usernameNormalized: `act-i-${stamp}` }).returning();
+  a.userId = u.id;
+  a.planId = (await createInitialWeek(u.id))!;
+  const sessionId = await startSession(u.id, a.planId, 1);
+
+  const activity = await addSessionActivity(u.id, sessionId, {
+    activityType: "cardio",
+    activityRole: "cardio",
+    exerciseId: null,
+    nameSnapshot: "Treadmill",
+    durationSeconds: 900,
+    distanceMeters: null,
+    speed: null,
+    inclinePercent: null,
+    effortRpe: 5,
+    notes: null,
+  });
+
+  const updated = await updateSessionActivity(u.id, sessionId, activity.id, { durationSeconds: 1200, notes: "Steady" });
+  assert.equal(updated.durationSeconds, 1200);
+
+  await removeSessionActivity(u.id, sessionId, activity.id);
+  const rows = await db.select().from(workoutSessionActivities).where(eq(workoutSessionActivities.id, activity.id));
+  assert.equal(rows.length, 0);
+
+  const activity2 = await addSessionActivity(u.id, sessionId, {
+    activityType: "mobility",
+    activityRole: "mobility",
+    exerciseId: null,
+    nameSnapshot: "Mobility",
+    durationSeconds: 300,
+    distanceMeters: null,
+    speed: null,
+    inclinePercent: null,
+    effortRpe: null,
+    notes: null,
+  });
+  await finishSession(u.id, sessionId, {});
+
+  await assert.rejects(
+    () => updateSessionActivity(u.id, sessionId, activity2.id, { durationSeconds: 60 }),
+    /finalised/,
+  );
+  await assert.rejects(
+    () => removeSessionActivity(u.id, sessionId, activity2.id),
+    /finalised/,
+  );
+});
+
+test("added exercise removal is allowed only with zero actual work", async () => {
+  const stamp = Date.now();
+  const [u] = await db.insert(users).values({ name: `Act J ${stamp}`, username: `act-j-${stamp}`, usernameNormalized: `act-j-${stamp}` }).returning();
+  a.userId = u.id;
+  a.planId = (await createInitialWeek(u.id))!;
+  const sessionId = await startSession(u.id, a.planId, 1);
+
+  const day = await db.select().from(workoutPlanDays).where(and(eq(workoutPlanDays.workoutPlanId, a.planId), eq(workoutPlanDays.dayNumber, 1))).limit(1);
+  const ex = await db.select().from(workoutPlanExercises).where(eq(workoutPlanExercises.workoutPlanDayId, day[0].id)).limit(1);
+
+  const added = await addUnplannedExercise(u.id, sessionId, ex[0].exerciseId);
+  await removeAddedSessionExercise(u.id, sessionId, ex[0].exerciseId);
+  const gone = await db.select().from(workoutSessionExercises).where(eq(workoutSessionExercises.id, added.id));
+  assert.equal(gone.length, 0);
+
+  const added2 = await addUnplannedExercise(u.id, sessionId, ex[0].exerciseId);
+  await db.insert(workoutSets).values({ workoutSessionExerciseId: added2.id, setNumber: 1, weightKg: 20, reps: 12, rpe: 6, setType: "working" });
+
+  await assert.rejects(
+    () => removeAddedSessionExercise(u.id, sessionId, ex[0].exerciseId),
+    /cannot be removed/,
+  );
+});
+
 test("recent actual summary exposes compact cardio/extra/replacement facts", async () => {
   const stamp = Date.now();
   const [u] = await db.insert(users).values({ name: `Act G ${stamp}`, username: `act-g-${stamp}`, usernameNormalized: `act-g-${stamp}` }).returning();
@@ -233,8 +345,26 @@ test("user isolation: B cannot touch A's activities or session", async () => {  
   b.planId = (await createInitialWeek(ub.id))!;
 
   const sessionId = await startSession(ua.id, a.planId, 1);
+  const day = await db.select().from(workoutPlanDays).where(and(eq(workoutPlanDays.workoutPlanId, a.planId), eq(workoutPlanDays.dayNumber, 1))).limit(1);
+  const ex = await db.select().from(workoutPlanExercises).where(eq(workoutPlanExercises.workoutPlanDayId, day[0].id)).limit(1);
+  const sse = await db.select().from(workoutSessionExercises).where(and(eq(workoutSessionExercises.workoutSessionId, sessionId), eq(workoutSessionExercises.exerciseId, ex[0].exerciseId))).limit(1);
+  const [set] = await db.insert(workoutSets).values({ workoutSessionExerciseId: sse[0].id, setNumber: 1, weightKg: 30, reps: 8, rpe: 6, setType: "working" }).returning();
+  const added = await addUnplannedExercise(ua.id, sessionId, ex[0].exerciseId);
+
   await assert.rejects(
     () => addSessionActivity(ub.id, sessionId, { activityType: "cardio", activityRole: "warmup", exerciseId: null, nameSnapshot: "Treadmill", durationSeconds: 600, distanceMeters: null, speed: null, inclinePercent: null, effortRpe: null, notes: null }),
+    /Session not found/,
+  );
+  await assert.rejects(
+    () => updateSessionSet(ub.id, sessionId, set.id, { reps: 10 }),
+    /Session not found/,
+  );
+  await assert.rejects(
+    () => removeSessionSet(ub.id, sessionId, set.id),
+    /Session not found/,
+  );
+  await assert.rejects(
+    () => removeAddedSessionExercise(ub.id, sessionId, added.exerciseId),
     /Session not found/,
   );
 });

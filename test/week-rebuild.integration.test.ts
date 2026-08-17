@@ -85,6 +85,8 @@ test("week rebuild preserves completed history, is idempotent, rejects stale, an
     feedback: { primaryReason: "too_many_days", secondaryReasons: [], structuredDetails: { target_days: "1" }, freeText: null },
   });
 
+  assert.equal(stored.coachSource, stored.proposal.aiMetadata?.model ? "gpt5" : "fallback");
+
   assert.equal(stored.proposal.overallAction, "modify_remaining_week");
   assert.ok(stored.proposal.preservedDays.some((d) => d.dayNumber === 1), "Monday must be preserved");
   assert.ok(!stored.proposal.proposedDays.some((d) => d.dayNumber === 1), "Monday must not be in proposedDays");

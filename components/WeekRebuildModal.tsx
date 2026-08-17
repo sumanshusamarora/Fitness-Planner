@@ -19,6 +19,7 @@ export interface RebuildFollowUp {
 interface StoredRebuild {
   id: number;
   status: string;
+  coachSource: "gpt5" | "fallback";
   feedbackId: number | null;
   proposal: {
     overallAction: string;
@@ -31,10 +32,12 @@ interface StoredRebuild {
     proposedDays: {
       dayNumber: number;
       status: "workout" | "rest";
+      sessionEffort: "light" | "normal" | null;
       title: string | null;
+      rationale: string[];
       exercises: { exerciseName: string; sets: number; minReps: number; maxReps: number; suggestedWeightKg: number | null }[];
     }[];
-    aiMetadata?: { model: string };
+    aiMetadata?: { model: string; promptVersion?: string };
   };
   diff: { summary: string[] };
 }
@@ -168,6 +171,45 @@ export function WeekRebuildModal({
       );
     }
 
+    if (reason === "too_few_days") {
+      const additional = String(details.additional_days ?? "+1");
+      const effort = String(details.added_day_effort ?? "coach_decide");
+      return (
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <p className="text-sm text-zinc-400">How many additional training days would you realistically like?</p>
+            {["+1", "+2"].map((option) => (
+              <button
+                key={option}
+                type="button"
+                onClick={() => setDetails({ ...details, additional_days: option })}
+                className={`w-full rounded-2xl px-4 py-3 text-left ${additional === option ? "bg-emerald-500 text-zinc-950" : "bg-zinc-800 text-zinc-100"}`}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+          <div className="space-y-2">
+            <p className="text-sm text-zinc-400">How should the added days feel?</p>
+            {[
+              { key: "coach_decide", label: "COACH DECIDES" },
+              { key: "light", label: "LIGHT" },
+              { key: "normal", label: "NORMAL" },
+            ].map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => setDetails({ ...details, added_day_effort: option.key })}
+                className={`w-full rounded-2xl px-4 py-3 text-left ${effort === option.key ? "bg-emerald-500 text-zinc-950" : "bg-zinc-800 text-zinc-100"}`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
     const follow = followUps[reason] ?? [];
     return (
       <div className="space-y-4">
@@ -194,7 +236,7 @@ export function WeekRebuildModal({
 
   return (
     <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/60" onClick={() => !busy && onClose()}>
-      <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-t-3xl border-t border-zinc-800 bg-zinc-900 p-5 pb-8" onClick={(e) => e.stopPropagation()}>
+      <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-t-3xl border-t border-zinc-800 bg-zinc-900 p-5 pb-8" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 2rem)" }} onClick={(e) => e.stopPropagation()}>
         <h2 className="mb-3 text-2xl font-bold">Adjust / rebuild week</h2>
         {error && <p className="mb-3 rounded-xl bg-red-500/10 p-3 text-sm text-red-300">{error}</p>}
 
@@ -253,10 +295,14 @@ export function WeekRebuildModal({
               safetyFlags={proposal.proposal.safetyFlags}
               model={proposal.proposal.aiMetadata?.model}
             />
+            <div className="rounded-xl bg-zinc-800/70 px-3 py-2 text-xs text-zinc-400">
+              Coach: {proposal.coachSource === "gpt5" ? "GPT-5" : "Local fallback"}
+              {proposal.proposal.aiMetadata?.promptVersion ? ` · Prompt ${proposal.proposal.aiMetadata.promptVersion}` : ""}
+            </div>
 
             <div>
               <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-zinc-500">Revised week</p>
-              <div className="space-y-1">
+              <div className="space-y-2">
                 {week.days.map((day) => {
                   const preserved = proposal.proposal.preservedDays.find((p) => p.dayNumber === day.dayNumber);
                   const proposed = proposal.proposal.proposedDays.find((p) => p.dayNumber === day.dayNumber);
@@ -266,9 +312,25 @@ export function WeekRebuildModal({
                       ? `${day.dayName} · ${proposed.title ?? "Workout"} · ${proposed.exercises.length} exercises`
                       : `${day.dayName} · Rest`;
                   return (
-                    <div key={day.planDayId} className="flex items-center justify-between rounded-xl bg-zinc-800 px-3 py-2 text-sm">
-                      <span>{label}</span>
-                      {preserved && <span className="text-emerald-400">✓</span>}
+                    <div key={day.planDayId} className="rounded-xl bg-zinc-800 px-3 py-3 text-sm">
+                      <div className="flex items-center justify-between gap-3">
+                        <span>{label}</span>
+                        <div className="flex items-center gap-2">
+                          {proposed?.status === "workout" && proposed.sessionEffort && (
+                            <span className="rounded-full bg-zinc-700 px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-200">
+                              {proposed.sessionEffort}
+                            </span>
+                          )}
+                          {preserved && <span className="text-emerald-400">✓</span>}
+                        </div>
+                      </div>
+                      {proposed?.status === "workout" && (proposed.rationale ?? []).length > 0 && (
+                        <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-zinc-300">
+                          {(proposed.rationale ?? []).slice(0, 3).map((item, i) => (
+                            <li key={`${day.planDayId}-${i}`}>{item}</li>
+                          ))}
+                        </ul>
+                      )}
                     </div>
                   );
                 })}

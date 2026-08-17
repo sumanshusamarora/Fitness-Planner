@@ -35,6 +35,12 @@ export function validateWeekRebuildProposal(
     if (!modifiableDayNumbers.has(day.dayNumber)) {
       throw new Error(`Proposal tries to change immutable day ${day.dayNumber}.`);
     }
+    if (day.status === "rest" && day.sessionEffort !== null) {
+      throw new Error(`Rest day ${day.dayNumber} must have null session effort.`);
+    }
+    if (day.rationale.length > 3) {
+      throw new Error(`Day ${day.dayNumber} has too many rationale bullets.`);
+    }
     for (const exercise of day.exercises) {
       if (!allowed.has(exercise.exerciseId)) {
         throw new Error(`Proposal references an exercise outside the allowed set: ${exercise.exerciseId}.`);
