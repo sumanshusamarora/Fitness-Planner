@@ -11,6 +11,8 @@ import {
   workoutSessions,
   workoutSets,
 } from "../db/schema";
+import { DomainError } from "./errors";
+import { hasActualWork, requireInProgressSession } from "./session-guards";
 import { formatDuration } from "./dates";
 import { measurementTypeFor } from "./exercise-measurement";
 import { getApprovedExternalReferences } from "./external-exercises";
@@ -273,6 +275,106 @@ export async function createSession(userId: number, planDayId: number) {
   }
 
   return session;
+}
+
+/**
+ * The single safe "Start" operation: resume an in-progress session for the
+ * plan day if one exists, otherwise create one atomically. Rest days are
+ * rejected. Approved "extra" workout days (which carry plan exercises) start
+ * normally.
+ *
+ * Concurrency is handled two ways: the plan-day row is locked inside the
+ * transaction so concurrent starts serialize, and the partial unique index
+ * `workout_sessions_active_session_day_idx` makes a second in-progress session
+ * for the same day impossible at the DB level.
+ */
+export async function startOrResumeSession(
+  userId: number,
+  planDayId: number,
+): Promise<{ session: typeof workoutSessions.$inferSelect; created: boolean }> {
+  return db.transaction(async (tx) => {
+    const owned = (
+      await tx
+        .select({ id: workoutPlans.id })
+        .from(workoutPlans)
+        .innerJoin(
+          workoutPlanDays,
+          eq(workoutPlanDays.workoutPlanId, workoutPlans.id),
+        )
+        .where(
+          and(eq(workoutPlanDays.id, planDayId), eq(workoutPlans.userId, userId)),
+        )
+        .limit(1)
+    )[0];
+    if (!owned) {
+      throw new DomainError("Day not found.", "PLAN_DAY_NOT_FOUND", 404);
+    }
+
+    // Serialize concurrent Starts for the same day.
+    await tx
+      .select()
+      .from(workoutPlanDays)
+      .where(eq(workoutPlanDays.id, planDayId))
+      .for("update");
+
+    const planExercises = await getPlanExercises(planDayId);
+    if (planExercises.length === 0) {
+      throw new DomainError(
+        "Rest days can't be started as a workout.",
+        "PLAN_DAY_IS_REST",
+        409,
+      );
+    }
+
+    const existing = (
+      await tx
+        .select()
+        .from(workoutSessions)
+        .where(
+          and(
+            eq(workoutSessions.workoutPlanDayId, planDayId),
+            eq(workoutSessions.status, "in_progress"),
+          ),
+        )
+        .orderBy(asc(workoutSessions.startedAt))
+        .limit(1)
+    )[0];
+    if (existing) return { session: existing, created: false };
+
+    try {
+      const recovery = await getLatestRecoverySnapshot(userId);
+      const [session] = await tx
+        .insert(workoutSessions)
+        .values({ userId, workoutPlanDayId: planDayId })
+        .returning();
+      for (const pe of planExercises) {
+        const recommendation = await computeRecommendation(userId, pe, recovery);
+        await tx.insert(workoutSessionExercises).values({
+          workoutSessionId: session.id,
+          exerciseId: pe.exerciseId,
+          position: pe.position,
+          suggestedWeightKg: recommendation.recommendedWeight,
+        });
+      }
+      return { session, created: true };
+    } catch (error) {
+      // A second in-flight start hit the partial unique index: resume it.
+      const resumed = (
+        await tx
+          .select()
+          .from(workoutSessions)
+          .where(
+            and(
+              eq(workoutSessions.workoutPlanDayId, planDayId),
+              eq(workoutSessions.status, "in_progress"),
+            ),
+          )
+          .limit(1)
+      )[0];
+      if (resumed) return { session: resumed, created: false };
+      throw error;
+    }
+  });
 }
 
 export interface SessionExerciseData {
@@ -728,8 +830,27 @@ async function requireOwnedSession(userId: number, sessionId: number) {
       .where(and(eq(workoutSessions.id, sessionId), eq(workoutSessions.userId, userId)))
       .limit(1)
   )[0];
-  if (!session) throw new Error("Session not found.");
+  if (!session) throw new DomainError("Session not found.", "SESSION_NOT_FOUND", 404);
   return session;
+}
+
+/** Mutate an exercise outcome only while the session and exercise allow it. */
+async function requireExecutor(
+  session: typeof workoutSessions.$inferSelect,
+  sessionExercise: typeof workoutSessionExercises.$inferSelect,
+  allowedFrom: string[],
+  error: string,
+) {
+  if (session.status !== "in_progress") {
+    throw new DomainError(
+      "This workout is already finalised; actual history is locked.",
+      "SESSION_NOT_IN_PROGRESS",
+      409,
+    );
+  }
+  if (!allowedFrom.includes(sessionExercise.status)) {
+    throw new DomainError(error, "EXERCISE_ALREADY_FINALIZED", 409);
+  }
 }
 
 export async function completeSessionExercise(
@@ -737,16 +858,32 @@ export async function completeSessionExercise(
   sessionId: number,
   exerciseId: number,
 ) {
-  await requireOwnedSession(userId, sessionId);
+  const session = await requireOwnedSession(userId, sessionId);
+  const sse = (
+    await db
+      .select()
+      .from(workoutSessionExercises)
+      .where(
+        and(
+          eq(workoutSessionExercises.workoutSessionId, sessionId),
+          eq(workoutSessionExercises.exerciseId, exerciseId),
+        ),
+      )
+      .limit(1)
+  )[0];
+  if (!sse) {
+    throw new DomainError("Exercise not found in session.", "EXERCISE_NOT_FOUND", 404);
+  }
+  await requireExecutor(
+    session,
+    sse,
+    ["pending"],
+    "Only a pending exercise can be completed.",
+  );
   return db
     .update(workoutSessionExercises)
     .set({ completed: true, status: "completed" })
-    .where(
-      and(
-        eq(workoutSessionExercises.workoutSessionId, sessionId),
-        eq(workoutSessionExercises.exerciseId, exerciseId),
-      ),
-    )
+    .where(eq(workoutSessionExercises.id, sse.id))
     .returning();
 }
 
@@ -756,16 +893,32 @@ export async function skipSessionExercise(
   exerciseId: number,
   reason: string,
 ) {
-  await requireOwnedSession(userId, sessionId);
+  const session = await requireOwnedSession(userId, sessionId);
+  const sse = (
+    await db
+      .select()
+      .from(workoutSessionExercises)
+      .where(
+        and(
+          eq(workoutSessionExercises.workoutSessionId, sessionId),
+          eq(workoutSessionExercises.exerciseId, exerciseId),
+        ),
+      )
+      .limit(1)
+  )[0];
+  if (!sse) {
+    throw new DomainError("Exercise not found in session.", "EXERCISE_NOT_FOUND", 404);
+  }
+  await requireExecutor(
+    session,
+    sse,
+    ["pending"],
+    "Only a pending exercise can be skipped.",
+  );
   return db
     .update(workoutSessionExercises)
     .set({ completed: false, status: "skipped", skipReason: reason })
-    .where(
-      and(
-        eq(workoutSessionExercises.workoutSessionId, sessionId),
-        eq(workoutSessionExercises.exerciseId, exerciseId),
-      ),
-    )
+    .where(eq(workoutSessionExercises.id, sse.id))
     .returning();
 }
 
@@ -786,8 +939,17 @@ export async function finishSession(
   sessionId: number,
   input: { energyRating?: string | null; overallRpe?: number | null },
 ) {
-  await requireOwnedSession(userId, sessionId);
-  const [session] = await db
+  const session = await requireOwnedSession(userId, sessionId);
+  // Repeated submits are idempotent; they must not create a second outcome.
+  if (session.status === "completed") return session;
+  if (session.status !== "in_progress") {
+    throw new DomainError(
+      "You can only finish an active workout.",
+      "SESSION_NOT_IN_PROGRESS",
+      409,
+    );
+  }
+  const [updated] = await db
     .update(workoutSessions)
     .set({
       status: "completed",
@@ -795,10 +957,16 @@ export async function finishSession(
       energyRating: input.energyRating ?? null,
       overallRpe: input.overallRpe ?? null,
     })
-    .where(and(eq(workoutSessions.id, sessionId), eq(workoutSessions.userId, userId)))
+    .where(
+      and(
+        eq(workoutSessions.id, sessionId),
+        eq(workoutSessions.userId, userId),
+        eq(workoutSessions.status, "in_progress"),
+      ),
+    )
     .returning();
   await markRemainingNotAttempted(sessionId);
-  return session;
+  return updated;
 }
 
 export async function endSessionEarly(
@@ -806,8 +974,17 @@ export async function endSessionEarly(
   sessionId: number,
   input: { reason?: string | null; energyRating?: string | null; overallRpe?: number | null },
 ) {
-  await requireOwnedSession(userId, sessionId);
-  const [session] = await db
+  const session = await requireOwnedSession(userId, sessionId);
+  // Repeated submits are idempotent; they must not create conflicting state.
+  if (session.status === "ended_early") return session;
+  if (session.status !== "in_progress") {
+    throw new DomainError(
+      "You can only end an active workout early.",
+      "SESSION_NOT_IN_PROGRESS",
+      409,
+    );
+  }
+  const [updated] = await db
     .update(workoutSessions)
     .set({
       status: "ended_early",
@@ -816,17 +993,91 @@ export async function endSessionEarly(
       energyRating: input.energyRating ?? null,
       overallRpe: input.overallRpe ?? null,
     })
-    .where(and(eq(workoutSessions.id, sessionId), eq(workoutSessions.userId, userId)))
+    .where(
+      and(
+        eq(workoutSessions.id, sessionId),
+        eq(workoutSessions.userId, userId),
+        eq(workoutSessions.status, "in_progress"),
+      ),
+    )
     .returning();
   await markRemainingNotAttempted(sessionId);
-  return session;
+  return updated;
 }
 
-export async function createSkippedSession(
+/**
+ * Skip a prescribed workout that has not started. Rest days and optional
+ * "extra" workouts are rejected (removing an extra is Phase 2.6B). Any
+ * existing session for the day — in progress or terminal — blocks skipping.
+ */
+export async function skipPlannedSession(
   userId: number,
   planDayId: number,
   reason: string | null,
 ) {
+  const day = (
+    await db
+      .select()
+      .from(workoutPlanDays)
+      .where(eq(workoutPlanDays.id, planDayId))
+      .limit(1)
+  )[0];
+  if (!day) throw new DomainError("Day not found.", "PLAN_DAY_NOT_FOUND", 404);
+
+  const plan = (
+    await db
+      .select({ id: workoutPlans.id })
+      .from(workoutPlans)
+      .where(and(eq(workoutPlans.id, day.workoutPlanId), eq(workoutPlans.userId, userId)))
+      .limit(1)
+  )[0];
+  if (!plan) throw new DomainError("Day not found.", "PLAN_DAY_NOT_FOUND", 404);
+
+  const [exerciseRows, existingSessions] = await Promise.all([
+    db
+      .select({ id: workoutPlanExercises.id })
+      .from(workoutPlanExercises)
+      .where(eq(workoutPlanExercises.workoutPlanDayId, planDayId)),
+    db
+      .select({ id: workoutSessions.id, status: workoutSessions.status })
+      .from(workoutSessions)
+      .where(
+        and(
+          eq(workoutSessions.workoutPlanDayId, planDayId),
+          eq(workoutSessions.userId, userId),
+        ),
+      )
+      .limit(1),
+  ]);
+
+  if (exerciseRows.length === 0) {
+    throw new DomainError("Rest days can't be skipped.", "PLAN_DAY_IS_REST", 409);
+  }
+
+  if (existingSessions.length > 0) {
+    const existing = existingSessions[0];
+    if (existing.status === "in_progress") {
+      throw new DomainError(
+        "This workout is in progress. Resume or end it first.",
+        "PLAN_DAY_ALREADY_STARTED",
+        409,
+      );
+    }
+    throw new DomainError(
+      "This workout already has a recorded outcome.",
+      "PLAN_DAY_ALREADY_STARTED",
+      409,
+    );
+  }
+
+  if (day.origin === "extra") {
+    throw new DomainError(
+      "Optional extra sessions can't be skipped; they can be removed instead.",
+      "PLAN_DAY_IS_EXTRA",
+      409,
+    );
+  }
+
   const [session] = await db
     .insert(workoutSessions)
     .values({
@@ -838,4 +1089,84 @@ export async function createSkippedSession(
     })
     .returning();
   return session;
+}
+
+/**
+ * Cancel an accidental, zero-work start. The session must be in_progress and
+ * must carry no user-authored actual state. Automatically created pending
+ * planned exercise rows are not actual work. On success the workout returns to
+ * its unstarted state without creating any terminal history.
+ */
+export async function cancelEmptySession(userId: number, sessionId: number) {
+  return db.transaction(async (tx) => {
+    const session = await requireInProgressSession(userId, sessionId, tx);
+    await tx
+      .select()
+      .from(workoutSessions)
+      .where(eq(workoutSessions.id, session.id))
+      .for("update");
+
+    if (await hasActualWork(tx, sessionId)) {
+      throw new DomainError(
+        "Work has already been logged; end the workout early instead.",
+        "SESSION_HAS_ACTUAL_WORK",
+        409,
+      );
+    }
+
+    const exerciseIds = (
+      await tx
+        .select({ id: workoutSessionExercises.id })
+        .from(workoutSessionExercises)
+        .where(eq(workoutSessionExercises.workoutSessionId, sessionId))
+    ).map((row) => row.id);
+    if (exerciseIds.length > 0) {
+      await tx
+        .delete(workoutSessionExercises)
+        .where(inArray(workoutSessionExercises.id, exerciseIds));
+    }
+    await tx
+      .delete(workoutSessions)
+      .where(eq(workoutSessions.id, sessionId));
+
+    return { cancelled: true };
+  });
+}
+
+/**
+ * Server-backed undo for a skipped exercise. Allowed only while the session is
+ * still in_progress; a skipped exercise returns to pending and stays restored
+ * after refresh. Once the session is terminal this is rejected.
+ */
+export async function restoreSkippedExercise(
+  userId: number,
+  sessionId: number,
+  exerciseId: number,
+) {
+  await requireInProgressSession(userId, sessionId);
+  const sse = (
+    await db
+      .select()
+      .from(workoutSessionExercises)
+      .where(
+        and(
+          eq(workoutSessionExercises.workoutSessionId, sessionId),
+          eq(workoutSessionExercises.exerciseId, exerciseId),
+        ),
+      )
+      .limit(1)
+  )[0];
+  if (!sse) {
+    throw new DomainError("Exercise not found in session.", "EXERCISE_NOT_FOUND", 404);
+  }
+  if (sse.status !== "skipped") {
+    throw new DomainError("This exercise is not skipped.", "EXERCISE_NOT_SKIPPED", 409);
+  }
+
+  const [row] = await db
+    .update(workoutSessionExercises)
+    .set({ status: "pending", skipReason: null, completed: false })
+    .where(eq(workoutSessionExercises.id, sse.id))
+    .returning();
+  return row;
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { removeSessionActivity, updateSessionActivity } from "@/lib/session-activities";
 import { currentUserOrNull } from "@/lib/session";
+import { toErrorBody } from "@/lib/errors";
 
 export async function PUT(
   req: Request,
@@ -23,10 +24,8 @@ export async function PUT(
     const row = await updateSessionActivity(user.id, Number(id), Number(activityId), patch as never);
     return NextResponse.json({ activity: row });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Could not update activity." },
-      { status: 400 },
-    );
+    const mapped = toErrorBody(error, "Could not update activity.");
+    return NextResponse.json(mapped.body, { status: mapped.status });
   }
 }
 
@@ -41,9 +40,7 @@ export async function DELETE(
     await removeSessionActivity(user.id, Number(id), Number(activityId));
     return NextResponse.json({ ok: true });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Could not remove activity." },
-      { status: 400 },
-    );
+    const mapped = toErrorBody(error, "Could not remove activity.");
+    return NextResponse.json(mapped.body, { status: mapped.status });
   }
 }

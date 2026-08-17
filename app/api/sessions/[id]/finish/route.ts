@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { finishSession } from "@/lib/workouts";
 import { currentUserOrNull } from "@/lib/session";
+import { toErrorBody } from "@/lib/errors";
 
 export async function POST(
   req: Request,
@@ -23,9 +24,7 @@ export async function POST(
     });
     return NextResponse.json({ ok: true });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Could not finish workout." },
-      { status: 404 },
-    );
+    const mapped = toErrorBody(error, "Could not finish workout.", 404);
+    return NextResponse.json(mapped.body, { status: mapped.status });
   }
 }

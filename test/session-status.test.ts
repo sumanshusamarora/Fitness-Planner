@@ -18,10 +18,10 @@ import { createInitialWeek } from "@/lib/initial-week";
 import {
   completeSessionExercise,
   createSession,
-  createSkippedSession,
   endSessionEarly,
   finishSession,
   getSessionSummary,
+  skipPlannedSession,
   skipSessionExercise,
 } from "@/lib/workouts";
 
@@ -134,14 +134,29 @@ test("end early preserves completed sets and marks remaining not performed", asy
 });
 
 test("skipping a session keeps the planned workout and records a skipped outcome", async () => {
-  await setupSession();
-  await createSkippedSession(f.userId, f.dayId, "work_family");
+  const [user] = await db
+    .insert(users)
+    .values({ name: "Session Skip Test", username: `skip-${Date.now()}`, usernameNormalized: `skip-${Date.now()}` })
+    .returning();
+  createdUserIds.push(user.id);
+  const planId = (await createInitialWeek(user.id))!;
+  const day = (
+    await db
+      .select()
+      .from(workoutPlanDays)
+      .where(eq(workoutPlanDays.workoutPlanId, planId))
+      .orderBy(workoutPlanDays.dayNumber)
+      .limit(1)
+  )[0];
+
+  const skipped = await skipPlannedSession(user.id, day.id, "work_family");
 
   // The plan still has its exercises.
-  const planExercises = await db.select().from(workoutPlanExercises).where(eq(workoutPlanExercises.workoutPlanDayId, f.dayId));
+  const planExercises = await db
+    .select()
+    .from(workoutPlanExercises)
+    .where(eq(workoutPlanExercises.workoutPlanDayId, day.id));
   assert.ok(planExercises.length > 0, "planned workout must remain intact");
-
-  const sessions = await db.select().from(workoutSessions).where(eq(workoutSessions.workoutPlanDayId, f.dayId));
-  const skipped = sessions.find((s) => s.status === "skipped")!;
+  assert.equal(skipped.status, "skipped");
   assert.equal(skipped.endReason, "work_family");
 });

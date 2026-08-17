@@ -1,4 +1,5 @@
-import { and, asc, eq, gte, inArray } from "drizzle-orm";import { db } from "@/db";
+import { and, asc, count, eq, gte, inArray } from "drizzle-orm";
+import { db } from "@/db";
 import {
   exercises,
   workoutPlanExercises,
@@ -7,6 +8,8 @@ import {
   workoutSessions,
   workoutSets,
 } from "@/db/schema";
+import { DomainError } from "@/lib/errors";
+import { requireInProgressSession } from "@/lib/session-guards";
 
 /**
  * Actual-session domain. A workout plan records what was prescribed; a workout
@@ -43,24 +46,12 @@ export interface SessionActivityInput {
   notes: string | null;
 }
 
-async function requireOwnedSession(userId: number, sessionId: number) {
-  const session = (
-    await db
-      .select({ id: workoutSessions.id, status: workoutSessions.status })
-      .from(workoutSessions)
-      .where(and(eq(workoutSessions.id, sessionId), eq(workoutSessions.userId, userId)))
-      .limit(1)
-  )[0];
-  if (!session) throw new Error("Session not found.");
-  return session;
-}
-
 export async function addSessionActivity(
   userId: number,
   sessionId: number,
   input: SessionActivityInput,
 ) {
-  await requireOwnedSession(userId, sessionId);
+  await requireInProgressSession(userId, sessionId);
   const rows = await db
     .select({ sortOrder: workoutSessionActivities.sortOrder })
     .from(workoutSessionActivities)
@@ -95,7 +86,7 @@ export async function updateSessionActivity(
   activityId: number,
   input: Partial<SessionActivityInput>,
 ) {
-  await requireOwnedSession(userId, sessionId);
+  await requireInProgressSession(userId, sessionId);
   const existing = (
     await db
       .select()
@@ -123,7 +114,7 @@ export async function removeSessionActivity(
   sessionId: number,
   activityId: number,
 ) {
-  await requireOwnedSession(userId, sessionId);
+  await requireInProgressSession(userId, sessionId);
   await db
     .delete(workoutSessionActivities)
     .where(
@@ -141,7 +132,7 @@ export async function addUnplannedExercise(
   sessionId: number,
   exerciseId: number,
 ) {
-  await requireOwnedSession(userId, sessionId);
+  await requireInProgressSession(userId, sessionId);
   const exercise = (
     await db
       .select({ id: exercises.id, name: exercises.name, active: exercises.active })
@@ -181,7 +172,7 @@ export async function replaceSessionExercise(
   replacementExerciseId: number,
   reason: ReplacementReason,
 ) {
-  await requireOwnedSession(userId, sessionId);
+  await requireInProgressSession(userId, sessionId);
   if (exerciseId === replacementExerciseId) throw new Error("Choose a different exercise.");
 
   const planned = (
@@ -233,13 +224,17 @@ export async function replaceSessionExercise(
   });
 }
 
-/** Undo a replacement before the workout is completed. */
+/**
+ * Undo a replacement. Only allowed while the session is in_progress and the
+ * replacement is empty: if the replacement has even one warm-up or working set,
+ * restore is rejected and that logged work is never deleted.
+ */
 export async function restoreSessionExercise(
   userId: number,
   sessionId: number,
   exerciseId: number,
 ) {
-  await requireOwnedSession(userId, sessionId);
+  await requireInProgressSession(userId, sessionId);
   const planned = (
     await db
       .select()
@@ -253,7 +248,9 @@ export async function restoreSessionExercise(
       )
       .limit(1)
   )[0];
-  if (!planned) throw new Error("No replacement to restore.");
+  if (!planned) {
+    throw new DomainError("No replacement to restore.", "NO_REPLACEMENT_TO_RESTORE", 409);
+  }
 
   const replacement = (
     await db
@@ -265,12 +262,18 @@ export async function restoreSessionExercise(
 
   return db.transaction(async (tx) => {
     if (replacement) {
-      const sets = await tx
-        .select({ id: workoutSets.id })
-        .from(workoutSets)
-        .where(eq(workoutSets.workoutSessionExerciseId, replacement.id));
-      if (sets.length) {
-        await tx.delete(workoutSets).where(eq(workoutSets.workoutSessionExerciseId, replacement.id));
+      const setCount = (
+        await tx
+          .select({ c: count() })
+          .from(workoutSets)
+          .where(eq(workoutSets.workoutSessionExerciseId, replacement.id))
+      )[0]?.c ?? 0;
+      if (setCount > 0) {
+        throw new DomainError(
+          "The replacement already has sets logged and can't be undone.",
+          "REPLACEMENT_HAS_ACTUAL_WORK",
+          409,
+        );
       }
       await tx.delete(workoutSessionExercises).where(eq(workoutSessionExercises.id, replacement.id));
     }
@@ -315,7 +318,19 @@ export async function buildSessionActivitySummary(
   userId: number,
   sessionId: number,
 ): Promise<SessionActivitySummary> {
-  const session = await requireOwnedSession(userId, sessionId);
+  const session = (
+    await db
+      .select({ id: workoutSessions.id })
+      .from(workoutSessions)
+      .where(
+        and(
+          eq(workoutSessions.id, sessionId),
+          eq(workoutSessions.userId, userId),
+        ),
+      )
+      .limit(1)
+  )[0];
+  if (!session) throw new DomainError("Session not found.", "SESSION_NOT_FOUND", 404);
 
   const [sseRows, activityRows] = await Promise.all([
     db

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { addUnplannedExercise } from "@/lib/session-activities";
 import { currentUserOrNull } from "@/lib/session";
+import { toErrorBody } from "@/lib/errors";
 
 export async function POST(
   req: Request,
@@ -18,9 +19,7 @@ export async function POST(
     const row = await addUnplannedExercise(user.id, Number(id), exerciseId);
     return NextResponse.json({ sessionExercise: row });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Could not add exercise." },
-      { status: 400 },
-    );
+    const mapped = toErrorBody(error, "Could not add exercise.");
+    return NextResponse.json(mapped.body, { status: mapped.status });
   }
 }

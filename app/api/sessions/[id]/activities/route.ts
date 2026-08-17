@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { workoutSessionActivities } from "@/db/schema";
 import { addSessionActivity, type ActivityRole, type ActivityType } from "@/lib/session-activities";
 import { currentUserOrNull } from "@/lib/session";
+import { toErrorBody } from "@/lib/errors";
 
 const ACTIVITY_TYPES = ["cardio", "mobility", "stretching", "other"];
 const ACTIVITY_ROLES = ["warmup", "cardio", "mobility", "cooldown", "other"];
@@ -65,9 +66,7 @@ export async function POST(
     });
     return NextResponse.json({ activity: row });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Could not add activity." },
-      { status: 400 },
-    );
+    const mapped = toErrorBody(error, "Could not add activity.");
+    return NextResponse.json(mapped.body, { status: mapped.status });
   }
 }

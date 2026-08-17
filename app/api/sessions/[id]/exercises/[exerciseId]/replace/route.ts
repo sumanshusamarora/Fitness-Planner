@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { replaceSessionExercise, REPLACEMENT_REASONS, type ReplacementReason } from "@/lib/session-activities";
 import { currentUserOrNull } from "@/lib/session";
+import { toErrorBody } from "@/lib/errors";
 
 export async function POST(
   req: Request,
@@ -19,9 +20,7 @@ export async function POST(
     const row = await replaceSessionExercise(user.id, Number(id), Number(exerciseId), replacementExerciseId, reason);
     return NextResponse.json({ sessionExercise: row });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Could not replace exercise." },
-      { status: 400 },
-    );
+    const mapped = toErrorBody(error, "Could not replace exercise.");
+    return NextResponse.json(mapped.body, { status: mapped.status });
   }
 }

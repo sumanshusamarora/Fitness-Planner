@@ -17,7 +17,7 @@ import {
   workoutSets,
 } from "@/db/schema";
 import { createInitialWeek } from "@/lib/initial-week";
-import { createSession } from "@/lib/workouts";
+import { createSession, finishSession } from "@/lib/workouts";
 import { buildProgressAnalytics } from "@/lib/progress";
 import {
   addSessionActivity,
@@ -66,7 +66,6 @@ after(async () => {
 async function startSession(userId: number, planId: number, dayNumber: number) {
   const day = await db.select().from(workoutPlanDays).where(and(eq(workoutPlanDays.workoutPlanId, planId), eq(workoutPlanDays.dayNumber, dayNumber))).limit(1);
   const session = await createSession(userId, day[0].id);
-  await db.update(workoutSessions).set({ status: "completed", completedAt: new Date() }).where(eq(workoutSessions.id, session.id));
   return session.id;
 }
 
@@ -90,6 +89,7 @@ test("warm-up sets do not pollute working-set progress analytics", async () => {
   const sessionId = await startSession(u.id, a.planId, 1);
   await logSet(u.id, sessionId, ex[0].exerciseId, 20, 10, "warmup");
   await logSet(u.id, sessionId, ex[0].exerciseId, 40, 12, "working");
+  await finishSession(u.id, sessionId, {});
 
   const progress = await buildProgressAnalytics({ userId: u.id });
   const exerciseProgress = progress.exercises.find((p) => p.exerciseId === ex[0].exerciseId);
@@ -139,17 +139,21 @@ test("replacement records the actual exercise, not a fake planned exposure", asy
   assert.equal(replaced.origin, "replacement");
   await db.insert(workoutSets).values({ workoutSessionExerciseId: replaced.id, setNumber: 1, weightKg: 50, reps: 12, rpe: 6, setType: "working" });
 
-  const progress = await buildProgressAnalytics({ userId: u.id });
-  const replacementProgress = progress.exercises.find((p) => p.exerciseId === replacement);
-  assert.ok(replacementProgress && replacementProgress.attemptedExposures >= 1, "replacement exercise must get the exposure");
-
   const original = await db.select().from(workoutSessionExercises).where(and(eq(workoutSessionExercises.workoutSessionId, sessionId), eq(workoutSessionExercises.exerciseId, planned))).limit(1);
   assert.equal(original[0].status, "replaced", "original planned exercise preserved as replaced");
 
-  // Restore the replacement.
-  await restoreSessionExercise(u.id, sessionId, planned);
-  const restored = await db.select().from(workoutSessionExercises).where(and(eq(workoutSessionExercises.workoutSessionId, sessionId), eq(workoutSessionExercises.exerciseId, planned))).limit(1);
-  assert.equal(restored[0].status, "pending");
+  // The replacement already has a working set, so an undo must be rejected and
+  // the logged set preserved.
+  await assert.rejects(
+    () => restoreSessionExercise(u.id, sessionId, planned),
+    /sets logged/,
+  );
+
+  await finishSession(u.id, sessionId, {});
+
+  const progress = await buildProgressAnalytics({ userId: u.id });
+  const replacementProgress = progress.exercises.find((p) => p.exerciseId === replacement);
+  assert.ok(replacementProgress && replacementProgress.attemptedExposures >= 1, "replacement exercise must get the exposure");
 });
 
 test("activities support add/update/remove and do not enter resistance analytics", async () => {
@@ -210,6 +214,7 @@ test("recent actual summary exposes compact cardio/extra/replacement facts", asy
   await addSessionActivity(u.id, sessionId, { activityType: "cardio", activityRole: "warmup", exerciseId: null, nameSnapshot: "Treadmill", durationSeconds: 900, distanceMeters: null, speed: null, inclinePercent: null, effortRpe: 5, notes: null });
   const replacement = await replaceSessionExercise(u.id, sessionId, exs[0].exerciseId, exs[1].exerciseId, "equipment_busy");
   await db.insert(workoutSets).values({ workoutSessionExerciseId: replacement.id, setNumber: 1, weightKg: 50, reps: 12, rpe: 6, setType: "working" });
+  await finishSession(u.id, sessionId, {});
 
   const summary = await buildRecentActualSummary(u.id);
   assert.ok(summary.warmupMinutes >= 15);

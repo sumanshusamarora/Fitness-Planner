@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import {
   planAdjustmentProposals,
@@ -72,14 +72,19 @@ async function getPlanDayOwned(
   return rows[0] ?? null;
 }
 
-async function dayHasCompletedSession(dayId: number): Promise<boolean> {
+async function dayHasRecordedSession(dayId: number): Promise<boolean> {
   const rows = await db
     .select({ id: workoutSessions.id })
     .from(workoutSessions)
     .where(
       and(
         eq(workoutSessions.workoutPlanDayId, dayId),
-        isNotNull(workoutSessions.completedAt),
+        inArray(workoutSessions.status, [
+          "in_progress",
+          "completed",
+          "ended_early",
+          "skipped",
+        ]),
       ),
     )
     .limit(1);
@@ -152,11 +157,11 @@ export async function proposeMoveOrSwap(
   ]);
   if (sourceCount === 0) throw new Error("That day has no workout to move.");
 
-  if (await dayHasCompletedSession(sourceDayId)) {
-    throw new Error("A completed workout cannot be moved.");
+  if (await dayHasRecordedSession(sourceDayId)) {
+    throw new Error("That workout already has training recorded and can't be moved.");
   }
-  if (await dayHasCompletedSession(targetDayId)) {
-    throw new Error("A completed day cannot be overwritten.");
+  if (await dayHasRecordedSession(targetDayId)) {
+    throw new Error("That day already has training recorded and can't be overwritten.");
   }
 
   const isSwap = targetCount > 0;
@@ -250,11 +255,11 @@ export async function applyPlanAdjustment(
 
     if (row.type === "move_workout" || row.type === "swap_days") {
       const p = proposal as MoveSwapProposal;
-      if (await dayHasCompletedSession(p.sourceDayId)) {
-        throw new Error("A completed workout cannot be moved.");
+      if (await dayHasRecordedSession(p.sourceDayId)) {
+        throw new Error("That workout already has training recorded and can't be moved.");
       }
-      if (await dayHasCompletedSession(p.targetDayId)) {
-        throw new Error("A completed day cannot be overwritten.");
+      if (await dayHasRecordedSession(p.targetDayId)) {
+        throw new Error("That day already has training recorded and can't be overwritten.");
       }
       // Origin marker: the day that receives the moved workout is "moved";
       // the source day becomes a rest day (no marker).
@@ -276,6 +281,25 @@ export async function applyPlanAdjustment(
           .limit(1)
       )[0];
       if (!day) throw new Error("Day not found.");
+      // A day with any recorded session is immutable for scheduling.
+      const recorded = await tx
+        .select({ id: workoutSessions.id })
+        .from(workoutSessions)
+        .where(
+          and(
+            eq(workoutSessions.workoutPlanDayId, p.dayId),
+            inArray(workoutSessions.status, [
+              "in_progress",
+              "completed",
+              "ended_early",
+              "skipped",
+            ]),
+          ),
+        )
+        .limit(1);
+      if (recorded.length > 0) {
+        throw new Error("That day already has training recorded and can't be overwritten.");
+      }
       const existing = await tx
         .select({ id: workoutPlanExercises.id })
         .from(workoutPlanExercises)

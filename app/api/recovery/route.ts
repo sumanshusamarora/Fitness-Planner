@@ -3,8 +3,9 @@ import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { recoveryLogs, workoutPlanDays, workoutPlans } from "@/db/schema";
 import { todayDayNumber, toISODate } from "@/lib/dates";
-import { createSession, getActivePlan, getPlanDay } from "@/lib/workouts";
+import { startOrResumeSession, getActivePlan, getPlanDay } from "@/lib/workouts";
 import { currentUserOrNull } from "@/lib/session";
+import { toErrorBody } from "@/lib/errors";
 
 export async function POST(req: Request) {
   const user = await currentUserOrNull();
@@ -75,7 +76,18 @@ export async function POST(req: Request) {
     })
     .returning();
 
-  const session = await createSession(user.id, planDayId);
+  let session;
+  try {
+    // Resume-or-create so a double-tap never yields a second session.
+    const resumeOrCreate = await startOrResumeSession(user.id, planDayId);
+    session = resumeOrCreate.session;
+  } catch (error) {
+    await db
+      .delete(recoveryLogs)
+      .where(and(eq(recoveryLogs.userId, user.id), eq(recoveryLogs.id, log.id)));
+    const mapped = toErrorBody(error, "Could not start workout.");
+    return NextResponse.json(mapped.body, { status: mapped.status });
+  }
 
   await db
     .update(recoveryLogs)

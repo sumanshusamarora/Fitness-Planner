@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { skipSessionExercise } from "@/lib/workouts";
 import { currentUserOrNull } from "@/lib/session";
+import { toErrorBody } from "@/lib/errors";
 
 const VALID_REASONS = [
   "equipment_busy",
@@ -27,9 +28,7 @@ export async function POST(
     await skipSessionExercise(user.id, Number(id), Number(exerciseId), reason);
     return NextResponse.json({ ok: true });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Could not skip exercise." },
-      { status: 404 },
-    );
+    const mapped = toErrorBody(error, "Could not skip exercise.", 404);
+    return NextResponse.json(mapped.body, { status: mapped.status });
   }
 }

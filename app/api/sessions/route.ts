@@ -1,10 +1,9 @@
-import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { db } from "@/db";
-import { workoutPlanDays, workoutPlans } from "@/db/schema";
-import { todayDayNumber } from "@/lib/dates";
-import { createSession, getActivePlan, getPlanDay } from "@/lib/workouts";
+import { startOrResumeSession } from "@/lib/workouts";
 import { currentUserOrNull } from "@/lib/session";
+import { toErrorBody } from "@/lib/errors";
+import { getActivePlan, getPlanDay } from "@/lib/workouts";
+import { todayDayNumber } from "@/lib/dates";
 
 export async function POST(req: Request) {
   const user = await currentUserOrNull();
@@ -27,19 +26,13 @@ export async function POST(req: Request) {
     planDayId = day.id;
   }
 
-  // Verify the requested plan day belongs to a plan owned by this user.
-  const owned = (
-    await db
-      .select({ id: workoutPlanDays.id })
-      .from(workoutPlanDays)
-      .innerJoin(workoutPlans, eq(workoutPlanDays.workoutPlanId, workoutPlans.id))
-      .where(and(eq(workoutPlanDays.id, planDayId), eq(workoutPlans.userId, user.id)))
-      .limit(1)
-  )[0];
-  if (!owned) {
-    return NextResponse.json({ error: "Day not found." }, { status: 404 });
+  try {
+    // Resume-or-create: repeated taps and concurrent requests all resolve to
+    // the single in-progress session for this plan day.
+    const { session } = await startOrResumeSession(user.id, planDayId);
+    return NextResponse.json({ sessionId: session.id });
+  } catch (error) {
+    const mapped = toErrorBody(error, "Could not start workout.");
+    return NextResponse.json(mapped.body, { status: mapped.status });
   }
-
-  const session = await createSession(user.id, planDayId);
-  return NextResponse.json({ sessionId: session.id });
 }

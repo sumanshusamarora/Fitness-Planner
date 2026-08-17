@@ -71,7 +71,7 @@ test("a completed workout cannot be moved", async () => {
 
   await assert.rejects(
     () => proposeMoveOrSwap(user.id, planId, mon.id, tue.id),
-    /completed workout cannot be moved/i,
+    /training recorded/,
   );
 
   // Cleanup for this second fixture.
