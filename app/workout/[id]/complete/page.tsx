@@ -31,8 +31,10 @@ export default async function CompletePage({
       notPerformedCount={
         summary.exerciseCount -
         summary.completedExerciseCount -
-        summary.skippedExerciseCount
+        summary.skippedExerciseCount -
+        summary.replacedExerciseCount
       }
+      replacedExerciseCount={summary.replacedExerciseCount}
       setCount={summary.setCount}
       durationText={summary.durationText}
       activities={activities}

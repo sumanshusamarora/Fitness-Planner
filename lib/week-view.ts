@@ -2,6 +2,7 @@ import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import {
   exercises,
+  planRevisions,
   workoutPlanDays,
   workoutPlanExercises,
   workoutPlans,
@@ -9,7 +10,9 @@ import {
   workoutSessions,
 } from "@/db/schema";
 import { addDaysToISODate, toISODate } from "./dates";
+import { hasActualWork } from "./session-guards";
 import { getActivePlan } from "./workouts";
+import type { PlanRevisionSnapshot } from "./plan-revisions";
 
 export type DayStatus =
   | "completed"
@@ -34,6 +37,10 @@ export interface WeekDayView {
   sessionId: number | null;
   progressExercises: number;
   isToday: boolean;
+  /** Head plan revision that would restore this day's move/swap, when legal. */
+  restoreRevisionId: number | null;
+  /** For an in-progress session: whether any actual work has been logged. */
+  sessionHasActualWork: boolean;
 }
 
 export interface WeekView {
@@ -121,6 +128,36 @@ export async function getWeekView(userId: number): Promise<WeekView | null> {
     }
   }
 
+  // Restorable provenance: which day currently holds an un-restored move/swap.
+  const activeRevisions = await db
+    .select()
+    .from(planRevisions)
+    .where(
+      and(
+        eq(planRevisions.workoutPlanId, plan.id),
+        inArray(planRevisions.kind, ["move", "swap"]),
+      ),
+    )
+    .orderBy(desc(planRevisions.id));
+  const restoreRevisionIdByDay = new Map<number, number>();
+  for (const revision of activeRevisions) {
+    if (revision.restoredAt != null) continue;
+    const after = revision.afterSnapshot as unknown as PlanRevisionSnapshot;
+    for (const day of after.days) {
+      if (day.exercises.length > 0 && !restoreRevisionIdByDay.has(day.dayId)) {
+        restoreRevisionIdByDay.set(day.dayId, revision.id);
+      }
+    }
+  }
+
+  // Whether each in-progress session has logged actual work (Cancel Start gate).
+  const actualWorkBySession = new Map<number, boolean>();
+  for (const row of sessionRows) {
+    if (row.status === "in_progress") {
+      actualWorkBySession.set(row.id, await hasActualWork(db, row.id));
+    }
+  }
+
   const viewDays: WeekDayView[] = days.map((day) => {
     const dateISO = addDaysToISODate(plan.startsOn, day.dayNumber - 1);
     const isToday = dateISO === todayISO;
@@ -170,6 +207,12 @@ export async function getWeekView(userId: number): Promise<WeekView | null> {
       sessionId,
       progressExercises: sessionId ? (doneBySession.get(sessionId) ?? 0) : 0,
       isToday,
+      restoreRevisionId: activeSession
+        ? null
+        : restoreRevisionIdByDay.get(day.id) ?? null,
+      sessionHasActualWork: sessionId
+        ? (actualWorkBySession.get(sessionId) ?? false)
+        : false,
     };
   });
 

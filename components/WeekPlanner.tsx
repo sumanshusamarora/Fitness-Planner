@@ -56,6 +56,9 @@ type Sheet =
   | { kind: "skip-session"; day: WeekDayView }
   | { kind: "confirm-move"; adjustment: StoredAdjustment }
   | { kind: "confirm-add"; adjustment: StoredAdjustment }
+  | { kind: "remove-extra"; day: WeekDayView }
+  | { kind: "restore-move"; day: WeekDayView }
+  | { kind: "cancel-start"; day: WeekDayView }
   | null;
 
 type Effort = "light" | "usual" | "heavy";
@@ -177,6 +180,56 @@ export function WeekPlanner({
     setBusy(false);
   }
 
+  async function removeExtra(day: WeekDayView) {
+    setBusy(true);
+    setError(null);
+    const res = await fetch(`/api/plan-days/${day.planDayId}/remove-extra`, {
+      method: "POST",
+    });
+    const data = await res.json();
+    if (data.ok) {
+      setSheet(null);
+      router.refresh();
+    } else {
+      setError(data.error ?? "Could not remove this extra workout.");
+    }
+    setBusy(false);
+  }
+
+  async function restoreMove(day: WeekDayView) {
+    if (day.restoreRevisionId == null) return;
+    setBusy(true);
+    setError(null);
+    const res = await fetch(`/api/plan-revisions/${day.restoreRevisionId}/restore`, {
+      method: "POST",
+    });
+    const data = await res.json();
+    if (data.restored) {
+      setSheet(null);
+      router.refresh();
+    } else {
+      setError(data.error ?? "Could not restore this change.");
+    }
+    setBusy(false);
+  }
+
+  async function cancelEmptyStart(day: WeekDayView) {
+    if (day.sessionId == null) return;
+    setBusy(true);
+    setError(null);
+    const res = await fetch(`/api/sessions/${day.sessionId}/cancel`, {
+      method: "POST",
+    });
+    const data = await res.json();
+    if (data.cancelled) {
+      setSheet(null);
+      router.refresh();
+    } else {
+      setError(data.error ?? "Could not cancel this workout start.");
+    }
+    setBusy(false);
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex items-baseline justify-between">
@@ -279,6 +332,12 @@ export function WeekPlanner({
               onMoveHere={(day) => setSheet({ kind: "move", source: null, target: day })}
               onSkipSession={(day) => setSheet({ kind: "skip-session", day })}
               onConfirmSkip={skipSession}
+              onRemoveExtra={(day) => setSheet({ kind: "remove-extra", day })}
+              onRestoreMove={(day) => setSheet({ kind: "restore-move", day })}
+              onCancelStart={(day) => setSheet({ kind: "cancel-start", day })}
+              onConfirmRemoveExtra={removeExtra}
+              onConfirmRestoreMove={restoreMove}
+              onConfirmCancelStart={cancelEmptyStart}
             />
           </div>
         </div>
@@ -310,27 +369,65 @@ function SheetBody(props: {
   onMoveHere: (day: WeekDayView) => void;
   onSkipSession: (day: WeekDayView) => void;
   onConfirmSkip: (day: WeekDayView, reason: string | null) => void;
+  onRemoveExtra: (day: WeekDayView) => void;
+  onRestoreMove: (day: WeekDayView) => void;
+  onCancelStart: (day: WeekDayView) => void;
+  onConfirmRemoveExtra: (day: WeekDayView) => void;
+  onConfirmRestoreMove: (day: WeekDayView) => void;
+  onConfirmCancelStart: (day: WeekDayView) => void;
 }) {
   const { sheet } = props;
 
   if (sheet.kind === "day") {
     const day = sheet.day;
+    const isRest = day.exerciseCount === 0;
+    const isUnstarted =
+      day.status === "scheduled" || day.status === "missed";
+    const isTerminal =
+      day.status === "completed" ||
+      day.status === "ended_early" ||
+      day.status === "skipped";
     return (
       <div>
         <SheetTitle>{day.dayName}</SheetTitle>
-        <p className="mb-4 text-lg font-semibold">{day.exerciseCount === 0 ? "Recovery day" : day.title}</p>
+        <p className="mb-4 text-lg font-semibold">{isRest ? "Recovery day" : day.title}</p>
         <div className="space-y-3">
           {day.status === "completed" && day.sessionId != null && (
             <Link href={`/history/${day.sessionId}`} className="block w-full rounded-2xl bg-emerald-500 py-4 text-center text-lg font-bold text-zinc-950">
               VIEW WORKOUT
             </Link>
           )}
-          {day.exerciseCount > 0 && day.status !== "completed" && day.status !== "ended_early" && day.status !== "skipped" && (
+          {(day.status === "ended_early" || day.status === "skipped") && day.sessionId != null && (
+            <Link href={`/history/${day.sessionId}`} className="block w-full rounded-2xl bg-zinc-800 py-4 text-center text-lg font-semibold text-zinc-100">
+              VIEW OUTCOME
+            </Link>
+          )}
+          {day.status === "in-progress" && day.sessionId != null && (
+            <>
+              <Link href={`/workout/${day.sessionId}`} className="block w-full rounded-2xl bg-emerald-500 py-4 text-center text-lg font-bold text-zinc-950">
+                RESUME
+              </Link>
+              {!day.sessionHasActualWork && (
+                <SheetButton onClick={() => props.onCancelStart(day)}>CANCEL WORKOUT START</SheetButton>
+              )}
+            </>
+          )}
+          {isUnstarted && !isRest && (
             <>
               <Link href={`/recovery?planDayId=${day.planDayId}`} className="block w-full rounded-2xl bg-emerald-500 py-4 text-center text-lg font-bold text-zinc-950">
-                {day.status === "in-progress" && day.sessionId ? "RESUME" : "START"}
+                START
               </Link>
-              {day.status !== "in-progress" && (
+              {day.origin === "extra" ? (
+                <>
+                  <SheetButton onClick={() => props.onMoveTo(day)}>MOVE TO ANOTHER DAY</SheetButton>
+                  <SheetButton onClick={() => props.onRemoveExtra(day)}>REMOVE EXTRA</SheetButton>
+                </>
+              ) : day.origin === "moved" && day.restoreRevisionId != null ? (
+                <>
+                  <SheetButton onClick={() => props.onMoveTo(day)}>MOVE AGAIN</SheetButton>
+                  <SheetButton onClick={() => props.onRestoreMove(day)}>RESTORE ORIGINAL DAY</SheetButton>
+                </>
+              ) : (
                 <>
                   <SheetButton onClick={() => props.onMoveTo(day)}>MOVE TO ANOTHER DAY</SheetButton>
                   <SheetButton onClick={() => props.onSkipSession(day)}>SKIP SESSION</SheetButton>
@@ -338,17 +435,69 @@ function SheetBody(props: {
               )}
             </>
           )}
-          {(day.status === "ended_early" || day.status === "skipped") && day.sessionId != null && (
-            <Link href={`/history/${day.sessionId}`} className="block w-full rounded-2xl bg-zinc-800 py-4 text-center text-lg font-semibold text-zinc-100">
-              VIEW OUTCOME
-            </Link>
-          )}
-          {day.exerciseCount === 0 && (
+          {isRest && (
             <>
               <SheetButton primary onClick={() => props.onEffort(day)}>TRAIN TODAY</SheetButton>
               <SheetButton onClick={() => props.onMoveHere(day)}>MOVE A WORKOUT HERE</SheetButton>
             </>
           )}
+        </div>
+        <CloseRow onClose={props.onClose} />
+      </div>
+    );
+  }
+
+  if (sheet.kind === "remove-extra") {
+    return (
+      <div>
+        <SheetTitle>Remove this extra workout?</SheetTitle>
+        <p className="mb-3 text-sm text-zinc-400">
+          The day returns to Rest. No workout is recorded and nothing counts as
+          a missed or skipped session.
+        </p>
+        <div className="space-y-3">
+          <SheetButton primary onClick={() => props.onConfirmRemoveExtra(sheet.day)}>
+            REMOVE EXTRA
+          </SheetButton>
+          <SheetButton onClick={props.onClose}>KEEP IT</SheetButton>
+        </div>
+        <CloseRow onClose={props.onClose} />
+      </div>
+    );
+  }
+
+  if (sheet.kind === "restore-move") {
+    return (
+      <div>
+        <SheetTitle>Restore original day?</SheetTitle>
+        <p className="mb-3 text-sm text-zinc-400">
+          The unchanged workout and schedule return to how they were before this
+          move. Only still-unstarted days are restored.
+        </p>
+        <div className="space-y-3">
+          <SheetButton primary onClick={() => props.onConfirmRestoreMove(sheet.day)}>
+            RESTORE ORIGINAL DAY
+          </SheetButton>
+          <SheetButton onClick={props.onClose}>KEEP CURRENT PLACEMENT</SheetButton>
+        </div>
+        <CloseRow onClose={props.onClose} />
+      </div>
+    );
+  }
+
+  if (sheet.kind === "cancel-start") {
+    return (
+      <div>
+        <SheetTitle>Cancel this workout start?</SheetTitle>
+        <p className="mb-3 text-sm text-zinc-400">
+          No training has been logged yet. This returns the day to its normal
+          unstarted state.
+        </p>
+        <div className="space-y-3">
+          <SheetButton primary onClick={() => props.onConfirmCancelStart(sheet.day)}>
+            CANCEL START
+          </SheetButton>
+          <SheetButton onClick={props.onClose}>KEEP WORKOUT OPEN</SheetButton>
         </div>
         <CloseRow onClose={props.onClose} />
       </div>

@@ -2,6 +2,8 @@ import { and, asc, count, eq, gte, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import {
   exercises,
+  sessionPlanSnapshotExercises,
+  sessionPlanSnapshots,
   workoutPlanExercises,
   workoutSessionActivities,
   workoutSessionExercises,
@@ -188,8 +190,22 @@ export async function replaceSessionExercise(
       .limit(1)
   )[0];
   if (!planned) throw new Error("Exercise not found in session.");
-  if (planned.status === "completed") throw new Error("A completed exercise cannot be replaced.");
-  if (planned.status === "replaced") throw new Error("This exercise was already replaced.");
+  if (planned.origin !== "planned") {
+    throw new Error("Only a planned exercise can be replaced.");
+  }
+  const plannedSets = (
+    await db
+      .select({ c: count() })
+      .from(workoutSets)
+      .where(eq(workoutSets.workoutSessionExerciseId, planned.id))
+  )[0]?.c ?? 0;
+  if (plannedSets > 0 || planned.status !== "pending") {
+    throw new DomainError(
+      "This exercise already has sets or was skipped; it can't be replaced. End the workout early instead.",
+      "EXERCISE_ALREADY_FINALIZED",
+      409,
+    );
+  }
 
   const replacement = (
     await db
@@ -261,6 +277,19 @@ export async function restoreSessionExercise(
   )[0];
 
   return db.transaction(async (tx) => {
+    const originalSetCount = (
+      await tx
+        .select({ c: count() })
+        .from(workoutSets)
+        .where(eq(workoutSets.workoutSessionExerciseId, planned.id))
+    )[0]?.c ?? 0;
+    if (originalSetCount > 0) {
+      throw new DomainError(
+        "The original already has logged work and can't be restored.",
+        "ORIGINAL_HAS_ACTUAL_WORK",
+        409,
+      );
+    }
     if (replacement) {
       const setCount = (
         await tx
@@ -282,6 +311,72 @@ export async function restoreSessionExercise(
       .set({ status: "pending" })
       .where(eq(workoutSessionExercises.id, planned.id));
   });
+}
+
+export interface LogSetInput {
+  exerciseId: number;
+  weightKg: number;
+  reps: number;
+  rpe: number | null;
+  setType: SetType;
+}
+
+/**
+ * Central set logger for a session exercise. Every actual set must be routed
+ * here so the replaced-vs-live-state guards live in one place: the target row
+ * must exist, the session must be in progress, and a replaced original whose
+ * substitute now carries the load can never receive sets — log on the
+ * replacement instead.
+ */
+export async function logSessionSet(
+  userId: number,
+  sessionId: number,
+  input: LogSetInput,
+) {
+  await requireInProgressSession(userId, sessionId);
+
+  const sse = (
+    await db
+      .select()
+      .from(workoutSessionExercises)
+      .where(
+        and(
+          eq(workoutSessionExercises.workoutSessionId, sessionId),
+          eq(workoutSessionExercises.exerciseId, input.exerciseId),
+        ),
+      )
+      .limit(1)
+  )[0];
+  if (!sse) {
+    throw new DomainError("Exercise not found in session.", "EXERCISE_NOT_FOUND", 404);
+  }
+  if (sse.status === "replaced") {
+    throw new DomainError(
+      "This exercise was replaced; log your sets on the replacement instead.",
+      "EXERCISE_REPLACED",
+      409,
+    );
+  }
+
+  const setCount = (
+    await db
+      .select({ c: count() })
+      .from(workoutSets)
+      .where(eq(workoutSets.workoutSessionExerciseId, sse.id))
+  )[0]?.c ?? 0;
+
+  const [set] = await db
+    .insert(workoutSets)
+    .values({
+      workoutSessionExerciseId: sse.id,
+      setNumber: setCount + 1,
+      weightKg: input.weightKg,
+      reps: input.reps,
+      rpe: input.rpe,
+      setType: input.setType,
+    })
+    .returning();
+  return set;
 }
 
 export interface SessionActivitySummary {
@@ -371,7 +466,8 @@ export async function buildSessionActivitySummary(
     workingBySse.set(set.workoutSessionExerciseId, (workingBySse.get(set.workoutSessionExerciseId) ?? 0) + 1);
   }
 
-  // Planned working-set expectation comes from the plan day's prescription.
+  // Planned working-set expectation comes from the session-start prescription
+  // snapshot (frozen), falling back to the live plan for legacy sessions.
   const sessionRow = (
     await db
       .select({ workoutPlanDayId: workoutSessions.workoutPlanDayId })
@@ -381,11 +477,29 @@ export async function buildSessionActivitySummary(
   )[0];
   let plannedWorkingSetsExpected = 0;
   if (sessionRow?.workoutPlanDayId) {
-    const planExerciseRows = await db
-      .select({ targetSets: workoutPlanExercises.targetSets })
-      .from(workoutPlanExercises)
-      .where(eq(workoutPlanExercises.workoutPlanDayId, sessionRow.workoutPlanDayId));
-    plannedWorkingSetsExpected = planExerciseRows.reduce((sum, row) => sum + row.targetSets, 0);
+    const snapshot = (
+      await db
+        .select({ id: sessionPlanSnapshots.id })
+        .from(sessionPlanSnapshots)
+        .where(eq(sessionPlanSnapshots.workoutSessionId, sessionId))
+        .limit(1)
+    )[0];
+    if (snapshot) {
+      const snapshotRows = await db
+        .select({ targetSets: sessionPlanSnapshotExercises.targetSets })
+        .from(sessionPlanSnapshotExercises)
+        .where(eq(sessionPlanSnapshotExercises.snapshotId, snapshot.id));
+      plannedWorkingSetsExpected = snapshotRows.reduce(
+        (sum, row) => sum + row.targetSets,
+        0,
+      );
+    } else {
+      const planExerciseRows = await db
+        .select({ targetSets: workoutPlanExercises.targetSets })
+        .from(workoutPlanExercises)
+        .where(eq(workoutPlanExercises.workoutPlanDayId, sessionRow.workoutPlanDayId));
+      plannedWorkingSetsExpected = planExerciseRows.reduce((sum, row) => sum + row.targetSets, 0);
+    }
   }
 
   let plannedWorkingSetsCompleted = 0;

@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, lte, ne } from "drizzle-orm";
+import { and, asc, eq, gte, gt, inArray, lte, ne } from "drizzle-orm";
 import { db } from "@/db";
 import {
   exercises,
@@ -219,7 +219,7 @@ export async function buildProgressAnalytics(input: {
           eq(workoutSets.workoutSessionExerciseId, workoutSessionExercises.id),
         )
         .innerJoin(workoutSessions, eq(workoutSessionExercises.workoutSessionId, workoutSessions.id))
-        .where(and(inArray(workoutSets.workoutSessionExerciseId, sessionExerciseIds), eq(workoutSets.setType, "working")))
+        .where(and(inArray(workoutSets.workoutSessionExerciseId, sessionExerciseIds), eq(workoutSets.setType, "working"), gt(workoutSets.reps, 0)))
         .orderBy(asc(workoutSessions.completedAt), asc(workoutSets.setNumber))
     : [];
 

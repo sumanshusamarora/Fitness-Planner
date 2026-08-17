@@ -20,6 +20,7 @@ interface FinishWorkoutProps {
   status: string;
   completedExerciseCount: number;
   skippedExerciseCount: number;
+  replacedExerciseCount: number;
   notPerformedCount: number;
   setCount: number;
   durationText: string;
@@ -64,6 +65,9 @@ export function FinishWorkout(props: FinishWorkoutProps) {
           <p className="text-emerald-400">✓ {props.completedExerciseCount} exercises completed</p>
           {props.skippedExerciseCount > 0 && (
             <p className="text-amber-300">– {props.skippedExerciseCount} skipped</p>
+          )}
+          {props.replacedExerciseCount > 0 && (
+            <p className="text-violet-400">↷ {props.replacedExerciseCount} replaced</p>
           )}
           {props.notPerformedCount > 0 && (
             <p className="text-zinc-500">{props.notPerformedCount} not performed</p>

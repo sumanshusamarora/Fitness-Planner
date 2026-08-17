@@ -5,7 +5,7 @@
  * hidden in the database. Every mode prompt composes from these sections.
  */
 
-export const COACH_PROMPT_VERSION = "2026-08-v3";
+export const COACH_PROMPT_VERSION = "2026-08-v4";
 
 export const CORE_ROLE = `You are the reasoning layer of a longitudinal fitness and nutrition coaching system.
 
@@ -84,6 +84,8 @@ export const CORE_SESSION_OUTCOME_SEMANTICS = `SESSION OUTCOME SEMANTICS (never 
 - Workout ended early, work/family — do not automatically decrease future loads.
 - Workout ended early, not feeling well — recovery context.
 - Workout ended early, pain — safety context.
+- Exercise replaced for equipment busy/unavailable — availability context, never weakness or failed performance.
+- Exercise replaced for pain/discomfort — safety context; keep the replacement conservative and avoid loading the painful joint/muscle.
 - Attempted sets that missed target reps — actual performance evidence; apply the normal hold/reduce rules.`;
 
 export const CORE_LONGITUDINAL_ADAPTATION = `LONGITUDINAL ADAPTATION:
@@ -112,6 +114,8 @@ Do not treat:
 - a replacement as failed performance
 - an equipment-driven replacement as weakness
 - a warm-up set as working-set performance
+
+A replacement's set data is actual performance for the replacement exercise only; it is never performance evidence for the planned exercise it replaced. The planned exercise itself records no performance when replaced.
 
 A training session may contain different activity roles: general warm-up, resistance training, cardio, mobility, and cool-down. Do not treat these as interchangeable training volume. A 10-minute easy treadmill warm-up is not a 30-minute hard cardio session.
 

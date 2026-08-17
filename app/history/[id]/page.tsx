@@ -19,6 +19,19 @@ function minutes(seconds: number | null): string {
   return ` · ${Math.round(seconds / 60)} min`;
 }
 
+const REPLACEMENT_REASON_LABELS: Record<string, string> = {
+  equipment_busy: "Equipment busy",
+  equipment_unavailable: "Equipment unavailable",
+  pain_discomfort: "Pain / discomfort",
+  preference: "Prefer something else",
+  coach_adjustment: "Coach adjustment",
+  other: "Other",
+};
+
+function reasonLabel(key: string): string {
+  return REPLACEMENT_REASON_LABELS[key] ?? key;
+}
+
 export default async function HistoryDetailPage({
   params,
 }: {
@@ -69,14 +82,27 @@ export default async function HistoryDetailPage({
         {detail.exercises.map((exercise, i) => (
           <div key={i} className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
             <div className="flex items-center justify-between">
-              <p className="text-lg font-semibold">{exercise.name}</p>
-              <div className="flex items-center gap-2">
+              <div>
+                <p className="text-lg font-semibold">{exercise.name}</p>
+                {exercise.replacesName && (
+                  <p className="text-sm text-violet-400">
+                    Replaced {exercise.replacesName}
+                    {exercise.replacementReason ? ` · ${reasonLabel(exercise.replacementReason)}` : ""}
+                  </p>
+                )}
+                {exercise.replacedByName && (
+                  <p className="text-sm text-zinc-500">
+                    Replaced by {exercise.replacedByName} — didn&apos;t run
+                  </p>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-2">
                 {exercise.origin === "added" && (
                   <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-sky-400">Added</span>
                 )}
                 {exercise.origin === "replacement" && (
                   <span className="rounded-full bg-violet-500/15 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-violet-400">
-                    Replaced{exercise.replacementReason ? ` · ${exercise.replacementReason}` : ""}
+                    Replaced
                   </span>
                 )}
                 {exercise.status === "replaced" && (

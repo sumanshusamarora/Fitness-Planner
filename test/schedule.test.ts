@@ -5,6 +5,7 @@ import { eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import {
   planAdjustmentProposals,
+  planRevisions,
   recoveryLogs,
   users,
   workoutPlanDays,
@@ -21,6 +22,7 @@ const f = { userId: 0, planId: 0 };
 after(async () => {
   if (!f.userId) return;
   await db.delete(planAdjustmentProposals).where(eq(planAdjustmentProposals.userId, f.userId));
+  await db.delete(planRevisions).where(eq(planRevisions.userId, f.userId));
   await db.delete(recoveryLogs).where(eq(recoveryLogs.userId, f.userId));
   const plans = await db.select({ id: workoutPlans.id }).from(workoutPlans).where(eq(workoutPlans.userId, f.userId));
   const planIds = plans.map((p) => p.id);

@@ -3,6 +3,8 @@ import { db } from "../db";
 import {
   exerciseMedia,
   exercises,
+  sessionPlanSnapshotExercises,
+  sessionPlanSnapshots,
   workoutPlanDays,
   workoutPlanExercises,
   workoutPlans,
@@ -39,6 +41,95 @@ export interface PlanExercise {
   targetRpe: number;
   suggestedWeightKg: number | null;
   restSeconds: number;
+}
+
+/**
+ * The prescription a session saw. Carried either by a durable
+ * `session_plan_snapshot` (created at session start) or, for legacy sessions
+ * created before snapshots existed, by the current live plan.
+ */
+export interface PrescribedExercise {
+  exerciseId: number;
+  name: string;
+  measurementType: string;
+  position: number;
+  targetSets: number;
+  minReps: number;
+  maxReps: number;
+  targetRpe: number;
+  restSeconds: number;
+  suggestedWeightKg: number | null;
+}
+
+export interface SessionPlanSnapshot {
+  id: number;
+  workoutSessionId: number;
+  workoutPlanDayId: number;
+  dayNumber: number;
+  dayName: string;
+  title: string;
+  origin: string | null;
+  exercises: PrescribedExercise[];
+}
+
+function toPrescribedExercise(pe: PlanExercise): PrescribedExercise {
+  return {
+    exerciseId: pe.exerciseId,
+    name: pe.name,
+    measurementType: measurementTypeFor({
+      measurementType: pe.measurementType,
+      category: pe.category,
+      equipment: pe.equipment,
+      name: pe.name,
+    }),
+    position: pe.position,
+    targetSets: pe.targetSets,
+    minReps: pe.minReps,
+    maxReps: pe.maxReps,
+    targetRpe: pe.targetRpe,
+    restSeconds: pe.restSeconds,
+    suggestedWeightKg: pe.suggestedWeightKg,
+  };
+}
+
+/** Load the prescription snapshot recorded when a session started, if any. */
+export async function getSessionPlanSnapshot(
+  workoutSessionId: number,
+): Promise<SessionPlanSnapshot | null> {
+  const [snapshot] = await db
+    .select()
+    .from(sessionPlanSnapshots)
+    .where(eq(sessionPlanSnapshots.workoutSessionId, workoutSessionId))
+    .limit(1);
+  if (!snapshot) return null;
+
+  const rows = await db
+    .select()
+    .from(sessionPlanSnapshotExercises)
+    .where(eq(sessionPlanSnapshotExercises.snapshotId, snapshot.id))
+    .orderBy(asc(sessionPlanSnapshotExercises.position));
+
+  return {
+    id: snapshot.id,
+    workoutSessionId: snapshot.workoutSessionId,
+    workoutPlanDayId: snapshot.workoutPlanDayId,
+    dayNumber: snapshot.dayNumber,
+    dayName: snapshot.dayName,
+    title: snapshot.title,
+    origin: snapshot.origin,
+    exercises: rows.map((row) => ({
+      exerciseId: row.exerciseId,
+      name: row.name,
+      measurementType: row.measurementType ?? "weighted_reps",
+      position: row.position,
+      targetSets: row.targetSets,
+      minReps: row.minReps,
+      maxReps: row.maxReps,
+      targetRpe: row.targetRpe,
+      restSeconds: row.restSeconds,
+      suggestedWeightKg: row.suggestedWeightKg,
+    })),
+  };
 }
 
 export interface LastTimeSummary {
@@ -255,8 +346,72 @@ export async function computeRecommendation(
   });
 }
 
+/** Insert a snapshot-ready insertion of planned exercises into a session. */
+async function materializePlannedExercises(
+  q: { insert: typeof db.insert },
+  userId: number,
+  sessionId: number,
+  planDay: typeof workoutPlanDays.$inferSelect | undefined,
+  planExercises: PlanExercise[],
+  recovery: RecoverySnapshot | null,
+) {
+  const snapshot =
+    planDay && planExercises.length > 0
+      ? (
+          await q
+            .insert(sessionPlanSnapshots)
+            .values({
+              workoutSessionId: sessionId,
+              workoutPlanDayId: planDay.id,
+              dayNumber: planDay.dayNumber,
+              dayName: planDay.dayName,
+              title: planDay.title,
+              origin: planDay.origin,
+            })
+            .returning()
+        )[0]
+      : null;
+
+  for (const pe of planExercises) {
+    const recommendation = await computeRecommendation(userId, pe, recovery);
+    await q.insert(workoutSessionExercises).values({
+      workoutSessionId: sessionId,
+      exerciseId: pe.exerciseId,
+      position: pe.position,
+      suggestedWeightKg: recommendation.recommendedWeight,
+    });
+    if (snapshot) {
+      await q.insert(sessionPlanSnapshotExercises).values({
+        snapshotId: snapshot.id,
+        exerciseId: pe.exerciseId,
+        name: pe.name,
+        position: pe.position,
+        targetSets: pe.targetSets,
+        minReps: pe.minReps,
+        maxReps: pe.maxReps,
+        targetRpe: pe.targetRpe,
+        suggestedWeightKg: recommendation.recommendedWeight,
+        restSeconds: pe.restSeconds,
+        measurementType: measurementTypeFor({
+          measurementType: pe.measurementType,
+          category: pe.category,
+          equipment: pe.equipment,
+          name: pe.name,
+        }),
+      });
+    }
+  }
+}
+
 export async function createSession(userId: number, planDayId: number) {
   const planExercises = await getPlanExercises(planDayId);
+  const planDay = (
+    await db
+      .select()
+      .from(workoutPlanDays)
+      .where(eq(workoutPlanDays.id, planDayId))
+      .limit(1)
+  )[0];
 
   const [session] = await db
     .insert(workoutSessions)
@@ -264,15 +419,14 @@ export async function createSession(userId: number, planDayId: number) {
     .returning();
 
   const recovery = await getLatestRecoverySnapshot(userId);
-  for (const pe of planExercises) {
-    const recommendation = await computeRecommendation(userId, pe, recovery);
-    await db.insert(workoutSessionExercises).values({
-      workoutSessionId: session.id,
-      exerciseId: pe.exerciseId,
-      position: pe.position,
-      suggestedWeightKg: recommendation.recommendedWeight,
-    });
-  }
+  await materializePlannedExercises(
+    db,
+    userId,
+    session.id,
+    planDay,
+    planExercises,
+    recovery,
+  );
 
   return session;
 }
@@ -311,11 +465,13 @@ export async function startOrResumeSession(
     }
 
     // Serialize concurrent Starts for the same day.
-    await tx
-      .select()
-      .from(workoutPlanDays)
-      .where(eq(workoutPlanDays.id, planDayId))
-      .for("update");
+    const planDay = (
+      await tx
+        .select()
+        .from(workoutPlanDays)
+        .where(eq(workoutPlanDays.id, planDayId))
+        .for("update")
+    )[0];
 
     const planExercises = await getPlanExercises(planDayId);
     if (planExercises.length === 0) {
@@ -347,15 +503,14 @@ export async function startOrResumeSession(
         .insert(workoutSessions)
         .values({ userId, workoutPlanDayId: planDayId })
         .returning();
-      for (const pe of planExercises) {
-        const recommendation = await computeRecommendation(userId, pe, recovery);
-        await tx.insert(workoutSessionExercises).values({
-          workoutSessionId: session.id,
-          exerciseId: pe.exerciseId,
-          position: pe.position,
-          suggestedWeightKg: recommendation.recommendedWeight,
-        });
-      }
+      await materializePlannedExercises(
+        tx,
+        userId,
+        session.id,
+        planDay,
+        planExercises,
+        recovery,
+      );
       return { session, created: true };
     } catch (error) {
       // A second in-flight start hit the partial unique index: resume it.
@@ -404,6 +559,12 @@ export interface SessionExerciseData {
   origin: "planned" | "added" | "replacement";
   replacementReason: string | null;
   skipReason: string | null;
+  /** For a replacement: the exercise id of the original it replaced (used by Restore). */
+  replacedExerciseId: number | null;
+  /** For a replacement: the prescribed name of the original exercise. */
+  replacesName: string | null;
+  /** For a replaced original: the name of the active replacement exercise. */
+  replacedByName: string | null;
 }
 
 export interface ActiveWorkoutData {
@@ -411,6 +572,8 @@ export interface ActiveWorkoutData {
   title: string;
   status: "in_progress" | "completed" | "ended_early" | "skipped";
   exercises: SessionExerciseData[];
+  /** True when any actual work (set, activity, exercise outcome) is logged. */
+  hasActualWork: boolean;
 }
 
 export async function getActiveWorkoutData(
@@ -434,7 +597,19 @@ export async function getActiveWorkoutData(
       .limit(1)
   )[0];
 
-  const planExercises = await getPlanExercises(session.workoutPlanDayId);
+  // The prescription comes from the immutable session-start snapshot. Only
+  // legacy sessions (created before snapshots existed) fall back to the live
+  // plan, so a later plan mutation can never rewrite a started session.
+  const snapshot = await getSessionPlanSnapshot(sessionId);
+  let planExercises: PrescribedExercise[];
+  if (snapshot) {
+    planExercises = snapshot.exercises;
+  } else {
+    planExercises = (await getPlanExercises(session.workoutPlanDayId)).map(
+      toPrescribedExercise,
+    );
+  }
+
   const sseRows = await db
     .select()
     .from(workoutSessionExercises)
@@ -444,26 +619,77 @@ export async function getActiveWorkoutData(
   const sseByExercise = new Map(sseRows.map((row) => [row.exerciseId, row]));
   const planByExerciseId = new Map(planExercises.map((pe) => [pe.exerciseId, pe]));
 
+  // Name lookup prefers the prescription snapshot (or legacy plan name), then
+  // the catalogue for unplanned additions/replacements. Full catalogue meta is
+  // fetched for unplanned movements so their measurement type classifies
+  // correctly.
+  const nameByExerciseId = new Map<number, string>(
+    planExercises.map((pe) => [pe.exerciseId, pe.name]),
+  );
+  const extraMetaByExerciseId = new Map<
+    number,
+    { name: string; measurementType: string | null; category: string | null; equipment: string | null }
+  >();
+  const unplannedSseIds = [
+    ...new Set(
+      sseRows
+        .filter((sse) => !nameByExerciseId.has(sse.exerciseId))
+        .map((sse) => sse.exerciseId),
+    ),
+  ];
+  if (unplannedSseIds.length) {
+    const rows = await db
+      .select({
+        id: exercises.id,
+        name: exercises.name,
+        measurementType: exercises.measurementType,
+        category: exercises.category,
+        equipment: exercises.equipment,
+      })
+      .from(exercises)
+      .where(inArray(exercises.id, unplannedSseIds));
+    for (const row of rows) {
+      nameByExerciseId.set(row.id, row.name);
+      extraMetaByExerciseId.set(row.id, {
+        name: row.name,
+        measurementType: row.measurementType,
+        category: row.category,
+        equipment: row.equipment,
+      });
+    }
+  }
+
+  // Replacement provenance links: a replaced original knows its replacement;
+  // a replacement knows the original it substituted (and the original's
+  // exercise id so Restore can target the right row).
+  const replacedByName = new Map<number, string | null>();
+  const replacesName = new Map<number, string | null>();
+  const replacedExerciseId = new Map<number, number | null>();
+  for (const sse of sseRows) {
+    if (sse.replacesSessionExerciseId != null) {
+      const original = sseById.get(sse.replacesSessionExerciseId);
+      replacesName.set(sse.id, original ? (nameByExerciseId.get(original.exerciseId) ?? "Exercise") : null);
+      replacedExerciseId.set(sse.id, original?.exerciseId ?? null);
+      if (original) {
+        replacedByName.set(original.id, nameByExerciseId.get(sse.exerciseId) ?? "Exercise");
+      }
+    }
+  }
+
   const extraExercises: { exerciseId: number; name: string; measurementType: string; sse: typeof sseRows[number] }[] = [];
   for (const sse of sseRows) {
     if ((sse.origin === "added" || sse.origin === "replacement") && !planByExerciseId.has(sse.exerciseId)) {
-      const ex = (
-        await db
-          .select({
-            name: exercises.name,
-            measurementType: exercises.measurementType,
-            category: exercises.category,
-            equipment: exercises.equipment,
-          })
-          .from(exercises)
-          .where(eq(exercises.id, sse.exerciseId))
-          .limit(1)
-      )[0];
-      const name = ex?.name ?? "Exercise";
+      const meta = extraMetaByExerciseId.get(sse.exerciseId);
+      const name = meta?.name ?? "Exercise";
       extraExercises.push({
         exerciseId: sse.exerciseId,
         name,
-        measurementType: measurementTypeFor({ measurementType: ex?.measurementType ?? null, category: ex?.category ?? null, equipment: ex?.equipment ?? null, name }),
+        measurementType: measurementTypeFor({
+          measurementType: meta?.measurementType ?? null,
+          category: meta?.category ?? null,
+          equipment: meta?.equipment ?? null,
+          name,
+        }),
         sse,
       });
     }
@@ -485,6 +711,8 @@ export async function getActiveWorkoutData(
     targetRpe: number;
     restSeconds: number;
     suggestedWeightKg: number | null;
+    /** When true the load shown is the frozen session-start recommendation. */
+    prescriptionFrozen: boolean;
     sse: typeof sseRows[number] | undefined;
   }): Promise<SessionExerciseData> {
     const sets = input.sse
@@ -524,7 +752,9 @@ export async function getActiveWorkoutData(
       maxReps: input.maxReps,
       targetRpe: input.targetRpe,
       restSeconds: input.restSeconds,
-      suggestedWeightKg: recommendation.recommendedWeight,
+      suggestedWeightKg: input.prescriptionFrozen
+        ? input.suggestedWeightKg ?? recommendation.recommendedWeight
+        : recommendation.recommendedWeight,
       lastTime: summarizeLastTime(lastSets),
       recommendationReason: recommendation.reason,
       media: mediaMap.get(input.exerciseId) ?? null,
@@ -534,6 +764,9 @@ export async function getActiveWorkoutData(
       origin: (input.sse?.origin as SessionExerciseData["origin"]) ?? "planned",
       replacementReason: input.sse?.replacementReason ?? null,
       skipReason: input.sse?.skipReason ?? null,
+      replacedExerciseId: input.sse ? (replacedExerciseId.get(input.sse.id) ?? null) : null,
+      replacesName: input.sse ? (replacesName.get(input.sse.id) ?? null) : null,
+      replacedByName: input.sse ? (replacedByName.get(input.sse.id) ?? null) : null,
     };
   }
 
@@ -543,7 +776,7 @@ export async function getActiveWorkoutData(
       await buildExerciseData({
         exerciseId: pe.exerciseId,
         name: pe.name,
-        measurementType: measurementTypeFor({ measurementType: pe.measurementType, category: pe.category, equipment: pe.equipment, name: pe.name }),
+        measurementType: pe.measurementType,
         position: pe.position,
         targetSets: pe.targetSets,
         minReps: pe.minReps,
@@ -551,6 +784,7 @@ export async function getActiveWorkoutData(
         targetRpe: pe.targetRpe,
         restSeconds: pe.restSeconds,
         suggestedWeightKg: pe.suggestedWeightKg,
+        prescriptionFrozen: snapshot != null,
         sse: sseByExercise.get(pe.exerciseId),
       }),
     );
@@ -561,15 +795,15 @@ export async function getActiveWorkoutData(
     let prescription = { targetSets: 3, minReps: 8, maxReps: 12, targetRpe: 6, restSeconds: 90, suggestedWeightKg: null as number | null };
     if (sse.origin === "replacement" && sse.replacesSessionExerciseId != null) {
       const original = sseById.get(sse.replacesSessionExerciseId);
-      const planExercise = original ? planByExerciseId.get(original.exerciseId) : undefined;
-      if (planExercise) {
+      const prescribed = original ? planByExerciseId.get(original.exerciseId) : undefined;
+      if (prescribed) {
         prescription = {
-          targetSets: planExercise.targetSets,
-          minReps: planExercise.minReps,
-          maxReps: planExercise.maxReps,
-          targetRpe: planExercise.targetRpe,
-          restSeconds: planExercise.restSeconds,
-          suggestedWeightKg: planExercise.suggestedWeightKg,
+          targetSets: prescribed.targetSets,
+          minReps: prescribed.minReps,
+          maxReps: prescribed.maxReps,
+          targetRpe: prescribed.targetRpe,
+          restSeconds: prescribed.restSeconds,
+          suggestedWeightKg: prescribed.suggestedWeightKg,
         };
       }
     }
@@ -585,6 +819,7 @@ export async function getActiveWorkoutData(
         targetRpe: prescription.targetRpe,
         restSeconds: prescription.restSeconds,
         suggestedWeightKg: prescription.suggestedWeightKg,
+        prescriptionFrozen: false,
         sse,
       }),
     );
@@ -594,9 +829,10 @@ export async function getActiveWorkoutData(
 
   return {
     sessionId,
-    title: planDay?.title ?? "Workout",
+    title: snapshot?.title ?? planDay?.title ?? "Workout",
     status: session.status as ActiveWorkoutData["status"],
     exercises: exercisesData,
+    hasActualWork: await hasActualWork(db, sessionId),
   };
 }
 
@@ -611,6 +847,7 @@ export interface SessionSummary {
   completedExerciseCount: number;
   skippedExerciseCount: number;
   notAttemptedExerciseCount: number;
+  replacedExerciseCount: number;
   setCount: number;
   durationText: string;
   inProgress: boolean;
@@ -656,6 +893,7 @@ export async function getSessionSummary(
   const notAttemptedExerciseCount = sseRows.filter(
     (r) => r.status === "not_attempted",
   ).length;
+  const replacedExerciseCount = sseRows.filter((r) => r.status === "replaced").length;
 
   const end = session.completedAt ?? new Date();
 
@@ -670,6 +908,7 @@ export async function getSessionSummary(
     completedExerciseCount,
     skippedExerciseCount,
     notAttemptedExerciseCount,
+    replacedExerciseCount,
     setCount: setCountRow[0]?.c ?? 0,
     durationText: formatDuration(session.startedAt, end),
     inProgress: session.status === "in_progress",
@@ -708,6 +947,10 @@ export interface SessionDetailExercise {
   skipReason: string | null;
   origin: string | null;
   replacementReason: string | null;
+  /** For a replacement: prescribed name of the original exercise it replaced. */
+  replacesName: string | null;
+  /** For a replaced original: name of the active replacement. */
+  replacedByName: string | null;
   sets: {
     setNumber: number;
     weightKg: number;
@@ -764,15 +1007,49 @@ export async function getSessionDetail(
     .where(eq(workoutSessionExercises.workoutSessionId, sessionId))
     .orderBy(asc(workoutSessionExercises.position));
 
+  // Prescription names from the session-start snapshot (frozen; survives later
+  // catalogue/plan edits). Added/replacement movements fall back to catalogue.
+  const snapshot = await getSessionPlanSnapshot(sessionId);
+  const nameByExerciseId = new Map<number, string>(
+    snapshot
+      ? snapshot.exercises.map((pe) => [pe.exerciseId, pe.name])
+      : [],
+  );
+  const unknownIds = [
+    ...new Set(sseRows.filter((sse) => !nameByExerciseId.has(sse.exerciseId)).map((sse) => sse.exerciseId)),
+  ];
+  if (unknownIds.length) {
+    const rows = await db
+      .select({ id: exercises.id, name: exercises.name })
+      .from(exercises)
+      .where(inArray(exercises.id, unknownIds));
+    for (const row of rows) nameByExerciseId.set(row.id, row.name);
+  }
+
+  const sseById = new Map(sseRows.map((row) => [row.id, row]));
+
+  // Replacement provenance names: a replacement names the original it replaced,
+  // and a replaced original names the replacement that now carries its load.
+  const replacedByName = new Map<number, string | null>();
+  const replacesName = new Map<number, string | null>();
+  for (const sse of sseRows) {
+    if (sse.replacesSessionExerciseId != null) {
+      const original = sseById.get(sse.replacesSessionExerciseId);
+      replacesName.set(
+        sse.id,
+        original ? (nameByExerciseId.get(original.exerciseId) ?? "Exercise") : null,
+      );
+      if (original) {
+        replacedByName.set(
+          original.id,
+          nameByExerciseId.get(sse.exerciseId) ?? "Exercise",
+        );
+      }
+    }
+  }
+
   const exercisesData: SessionDetailExercise[] = [];
   for (const sse of sseRows) {
-    const ex = (
-      await db
-        .select({ name: exercises.name })
-        .from(exercises)
-        .where(eq(exercises.id, sse.exerciseId))
-        .limit(1)
-    )[0];
     const sets = await db
       .select({
         setNumber: workoutSets.setNumber,
@@ -786,11 +1063,13 @@ export async function getSessionDetail(
       .orderBy(asc(workoutSets.setNumber));
 
     exercisesData.push({
-      name: ex?.name ?? "Exercise",
+      name: nameByExerciseId.get(sse.exerciseId) ?? "Exercise",
       status: sse.status,
       skipReason: sse.skipReason,
       origin: sse.origin,
       replacementReason: sse.replacementReason,
+      replacesName: replacesName.get(sse.id) ?? null,
+      replacedByName: replacedByName.get(sse.id) ?? null,
       sets,
     });
   }
@@ -1124,6 +1403,21 @@ export async function cancelEmptySession(userId: number, sessionId: number) {
       await tx
         .delete(workoutSessionExercises)
         .where(inArray(workoutSessionExercises.id, exerciseIds));
+    }
+    const snapshot = (
+      await tx
+        .select({ id: sessionPlanSnapshots.id })
+        .from(sessionPlanSnapshots)
+        .where(eq(sessionPlanSnapshots.workoutSessionId, sessionId))
+        .limit(1)
+    )[0];
+    if (snapshot) {
+      await tx
+        .delete(sessionPlanSnapshotExercises)
+        .where(eq(sessionPlanSnapshotExercises.snapshotId, snapshot.id));
+      await tx
+        .delete(sessionPlanSnapshots)
+        .where(eq(sessionPlanSnapshots.id, snapshot.id));
     }
     await tx
       .delete(workoutSessions)

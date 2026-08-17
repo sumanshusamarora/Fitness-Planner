@@ -1,4 +1,5 @@
 import {
+  AnyPgColumn,
   pgTable,
   serial,
   text,
@@ -256,6 +257,69 @@ export const workoutSessions = pgTable(
 );
 
 /**
+ * The prescription a workout session saw when it started. Immutable: the live
+ * plan (`workout_plan_exercises`) remains mutable future intent, while a
+ * started session keeps the exact day/exercise prescription it began with, so
+ * later plan changes can never retroactively rewrite what was prescribed.
+ * Created once at session start; never updated. There is exactly one per
+ * session, keyed by `workout_session_id`.
+ */
+export const sessionPlanSnapshots = pgTable(
+  "session_plan_snapshots",
+  {
+    id: serial("id").primaryKey(),
+    workoutSessionId: integer("workout_session_id")
+      .notNull()
+      .references(() => workoutSessions.id, { onDelete: "cascade" }),
+    workoutPlanDayId: integer("workout_plan_day_id")
+      .notNull()
+      .references(() => workoutPlanDays.id),
+    dayNumber: integer("day_number").notNull(),
+    dayName: text("day_name").notNull(),
+    title: text("title").notNull(),
+    origin: text("origin"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("session_plan_snapshots_session_idx").on(table.workoutSessionId),
+    index("session_plan_snapshots_day_idx").on(table.workoutPlanDayId),
+  ],
+);
+
+/**
+ * Per-exercise prescription rows frozen at session start. Repository of the
+ * script-prescribed target sets/reps/RPE/rest and the weight recommendation
+ * shown when the user pressed Start. `name` is a display snapshot so history
+ * survives later catalogue edits.
+ */
+export const sessionPlanSnapshotExercises = pgTable(
+  "session_plan_snapshot_exercises",
+  {
+    id: serial("id").primaryKey(),
+    snapshotId: integer("snapshot_id")
+      .notNull()
+      .references(() => sessionPlanSnapshots.id, { onDelete: "cascade" }),
+    exerciseId: integer("exercise_id")
+      .notNull()
+      .references(() => exercises.id),
+    name: text("name").notNull(),
+    position: integer("position").notNull(),
+    targetSets: integer("target_sets").notNull(),
+    minReps: integer("min_reps").notNull(),
+    maxReps: integer("max_reps").notNull(),
+    targetRpe: integer("target_rpe").notNull(),
+    suggestedWeightKg: real("suggested_weight_kg"),
+    restSeconds: integer("rest_seconds").notNull(),
+    measurementType: text("measurement_type"),
+  },
+  (table) => [
+    index("session_plan_snapshot_exercises_snapshot_idx").on(table.snapshotId),
+  ],
+);
+
+/**
  * An actual resistance movement inside a workout session. `origin` records why
  * the movement exists (planned / added spontaneously / a replacement), while
  * `replaces_session_exercise_id` links a replacement back to the original
@@ -464,5 +528,44 @@ export const planAdjustmentProposals = pgTable(
   (table) => [
     index("plan_adjustment_proposals_user_id_idx").on(table.userId),
     index("plan_adjustment_proposals_plan_id_idx").on(table.workoutPlanId),
+  ],
+);
+
+/**
+ * Durable provenance for future-plan mutations (move, swap, add extra, remove
+ * extra). Each row stores the exact day-level state before and after the
+ * operation so a still-unstarted change can be restored deterministically
+ * without reconstructing it from the `origin` display marker. Only unstarted
+ * `move`/`swap` revisions are restorable; removing an extra or recording a
+ * rebuild change is an audit trail, not a restoration source.
+ *
+ * A later move can chain an earlier move via `reverses_revision_id`, so
+ * "Restore Original Day" on a Wed → Thu → Sat chain puts the unchanged
+ * workout back on its pre-move day in one atomic restore.
+ */
+export const planRevisions = pgTable(
+  "plan_revisions",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id),
+    workoutPlanId: integer("workout_plan_id")
+      .notNull()
+      .references(() => workoutPlans.id),
+    kind: text("kind").notNull(),
+    beforeSnapshot: jsonb("before_snapshot").notNull(),
+    afterSnapshot: jsonb("after_snapshot").notNull(),
+    stateHashBefore: text("state_hash_before").notNull(),
+    stateHashAfter: text("state_hash_after").notNull(),
+    reversesRevisionId: integer("reverses_revision_id").references(
+      (): AnyPgColumn => planRevisions.id,
+    ),
+    restoredAt: timestamp("restored_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("plan_revisions_user_id_idx").on(table.userId),
+    index("plan_revisions_plan_id_idx").on(table.workoutPlanId),
   ],
 );

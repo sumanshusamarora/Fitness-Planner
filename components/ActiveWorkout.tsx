@@ -45,6 +45,12 @@ interface Exercise {
   origin: "planned" | "added" | "replacement";
   replacementReason: string | null;
   skipReason: string | null;
+  /** For a replacement: the exercise id of the original it replaced. */
+  replacedExerciseId: number | null;
+  /** For a replacement: prescribed name of the original exercise. */
+  replacesName: string | null;
+  /** For a replaced original: name of the active replacement. */
+  replacedByName: string | null;
 }
 
 export interface ActiveWorkoutData {
@@ -52,6 +58,7 @@ export interface ActiveWorkoutData {
   title: string;
   status: "in_progress" | "completed" | "ended_early" | "skipped";
   exercises: Exercise[];
+  hasActualWork: boolean;
 }
 
 type Phase = "setup" | "rpe" | "rest" | "done";
@@ -75,7 +82,11 @@ const END_EARLY_REASONS: { key: string; label: string }[] = [
 ];
 
 function phaseFor(ex: Exercise): Phase {
-  return ex.status === "completed" || ex.status === "skipped" ? "done" : "setup";
+  return ex.status === "completed" ||
+    ex.status === "skipped" ||
+    ex.status === "replaced"
+    ? "done"
+    : "setup";
 }
 
 export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
@@ -109,6 +120,7 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
   const [skipOpen, setSkipOpen] = useState(false);
   const [endEarlyOpen, setEndEarlyOpen] = useState(false);
   const [finishOpen, setFinishOpen] = useState(false);
+  const [cancelStartOpen, setCancelStartOpen] = useState(false);
   const [warmup, setWarmup] = useState(false);
   const [addActivityOpen, setAddActivityOpen] = useState(false);
   const [replaceOpen, setReplaceOpen] = useState(false);
@@ -152,6 +164,7 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
   const allDone = exercises.every((e) => e.status !== "pending");
   const completedCount = exercises.filter((e) => e.status === "completed").length;
   const skippedCount = exercises.filter((e) => e.status === "skipped").length;
+  const replacedCount = exercises.filter((e) => e.status === "replaced").length;
 
   function updateDraft(patch: Partial<{ weight: number; reps: number }>) {
     setDrafts((prev) => ({
@@ -252,6 +265,47 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
     }
   }
 
+  async function undoSkip() {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/exercises/${ex.exerciseId}/restore-skip`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? "Could not restore this exercise.");
+      }
+      setExercises((prev) =>
+        prev.map((e, i) =>
+          i === index
+            ? { ...e, status: "pending" as ExerciseStatus, skipReason: null }
+            : e,
+        ),
+      );
+      setPhase("setup");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not restore this exercise.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function cancelStart() {
+    setCancelStartOpen(false);
+    setSaving(true);
+    const res = await fetch(`/api/sessions/${sessionId}/cancel`, {
+      method: "POST",
+    });
+    setSaving(false);
+    if (res.ok) {
+      router.push("/week");
+    } else {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error ?? "Could not cancel this workout start.");
+    }
+  }
+
   async function addActivity() {
     if (!activityKind) return;
     const type = activityKind === "mobility" ? "mobility" : activityKind === "cooldown" ? "stretching" : "cardio";
@@ -295,6 +349,26 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
       router.refresh();
     } else {
       setError("Could not replace this exercise.");
+    }
+  }
+
+  async function restoreOriginal() {
+    if (!ex.replacedExerciseId) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/sessions/${sessionId}/exercises/${ex.replacedExerciseId}/restore`,
+        { method: "POST" },
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? "Could not restore the original exercise.");
+      }
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not restore the original exercise.");
+      setSaving(false);
     }
   }
 
@@ -342,11 +416,13 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
               className={`h-1 flex-1 rounded-full ${
                 e.status === "completed"
                   ? "bg-emerald-500"
-                  : e.status === "skipped"
-                    ? "bg-amber-500"
-                    : i === index
-                      ? "bg-zinc-300"
-                      : "bg-zinc-800"
+                  : e.status === "replaced"
+                    ? "bg-violet-500"
+                    : e.status === "skipped"
+                      ? "bg-amber-500"
+                      : i === index
+                        ? "bg-zinc-300"
+                        : "bg-zinc-800"
               }`}
             />
           ))}
@@ -434,6 +510,15 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
                 <p className="mt-1 text-sm text-zinc-500">{ex.recommendationReason}</p>
               )}
             </div>
+
+            {ex.origin === "replacement" && ex.replacesName && (
+              <div className="mt-4 rounded-2xl border border-violet-500/30 bg-violet-500/10 p-4">
+                <p className="text-sm text-violet-300">
+                  Replacing {ex.replacesName}
+                  {ex.replacementReason ? ` · ${reasonLabel(ex.replacementReason)}` : ""}
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="rounded-3xl border border-zinc-800 bg-zinc-900 p-6">
@@ -536,14 +621,21 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
       {phase === "done" && (
         <div className="rounded-3xl border border-zinc-800 bg-zinc-900 p-8 text-center">
           <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500 text-4xl font-bold text-zinc-950">
-            {ex.status === "skipped" ? "–" : "✓"}
+            {ex.status === "skipped" ? "–" : ex.status === "replaced" ? "↷" : "✓"}
           </div>
           <h2 className="mt-6 text-3xl font-bold">
-            {ex.status === "skipped" ? "Skipped" : "Exercise complete"}
+            {ex.status === "skipped"
+              ? "Skipped"
+              : ex.status === "replaced"
+                ? "Replaced"
+                : "Exercise complete"}
           </h2>
           <p className="mt-1 text-zinc-400">
             {ex.name}
             {ex.status === "skipped" && ex.skipReason && ` · ${reasonLabel(ex.skipReason)}`}
+            {ex.status === "replaced" && ex.replacedByName && (
+              <span className="block text-sm">→ performed as {ex.replacedByName}</span>
+            )}
           </p>
           {ex.loggedSets.length > 0 && (
             <div className="mt-4 space-y-1 text-zinc-300">
@@ -558,17 +650,21 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
           {ex.status === "skipped" && (
             <button
               type="button"
-              onClick={() => {
-                setExercises((prev) =>
-                  prev.map((e, i) =>
-                    i === index ? { ...e, status: "pending" as ExerciseStatus, skipReason: null } : e,
-                  ),
-                );
-                setPhase("setup");
-              }}
-              className="mt-5 rounded-2xl bg-zinc-800 px-5 py-3 font-semibold text-zinc-100"
+              onClick={undoSkip}
+              disabled={saving}
+              className="mt-5 rounded-2xl bg-zinc-800 px-5 py-3 font-semibold text-zinc-100 disabled:opacity-60"
             >
               UNDO SKIP
+            </button>
+          )}
+          {ex.status === "replaced" && ex.origin === "replacement" && (
+            <button
+              type="button"
+              onClick={restoreOriginal}
+              disabled={saving || ex.loggedSets.length > 0}
+              className="mt-5 rounded-2xl bg-zinc-800 px-5 py-3 font-semibold text-zinc-100 disabled:opacity-40"
+            >
+              RESTORE ORIGINAL{ex.loggedSets.length > 0 ? " (locked: sets logged)" : ""}
             </button>
           )}
         </div>
@@ -628,9 +724,11 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
                 <span className="text-sm text-zinc-400">
                   {e.status === "completed"
                     ? `${e.loggedSets.length} sets`
-                    : e.status === "skipped"
-                      ? "skipped"
-                      : ""}
+                    : e.status === "replaced"
+                      ? "replaced"
+                      : e.status === "skipped"
+                        ? "skipped"
+                        : ""}
                 </span>
               </button>
             ))}
@@ -649,18 +747,27 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
             <SheetButton onClick={() => { setMenuOpen(false); setAddActivityOpen(true); }}>
               Add activity
             </SheetButton>
-            <SheetButton onClick={() => { setMenuOpen(false); setReplaceOpen(true); }}>
-              Replace exercise
-            </SheetButton>
-            <SheetButton onClick={() => { setMenuOpen(false); setSkipOpen(true); }}>
-              Skip exercise
-            </SheetButton>
+            {ex.origin === "planned" && ex.status === "pending" && (
+              <SheetButton onClick={() => { setMenuOpen(false); setReplaceOpen(true); }}>
+                Replace exercise
+              </SheetButton>
+            )}
+            {ex.origin === "planned" && ex.status === "pending" && (
+              <SheetButton onClick={() => { setMenuOpen(false); setSkipOpen(true); }}>
+                Skip exercise
+              </SheetButton>
+            )}
             <SheetButton onClick={() => { setMenuOpen(false); setFinishOpen(true); }}>
               Finish workout
             </SheetButton>
             <SheetButton onClick={() => { setMenuOpen(false); setEndEarlyOpen(true); }}>
               End workout early
             </SheetButton>
+            {!data.hasActualWork && (
+              <SheetButton onClick={() => { setMenuOpen(false); setCancelStartOpen(true); }}>
+                Cancel workout start
+              </SheetButton>
+            )}
           </div>
           <CloseRow onClose={() => setMenuOpen(false)} />
         </Overlay>
@@ -709,14 +816,31 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
         <Overlay onClose={() => setFinishOpen(false)}>
           <h2 className="mb-3 text-2xl font-bold">Finish workout?</h2>
           <p className="text-zinc-300">
-            {completedCount} completed · {skippedCount} skipped ·{" "}
-            {exercises.length - completedCount - skippedCount} not performed
+            {completedCount} completed · {skippedCount} skipped
+            {replacedCount > 0 && ` · ${replacedCount} replaced`} ·{" "}
+            {exercises.length - completedCount - skippedCount - replacedCount} not performed
           </p>
           <div className="mt-5 space-y-3">
             <SheetButton primary onClick={finish}>
               FINISH
             </SheetButton>
             <SheetButton onClick={() => setFinishOpen(false)}>GO BACK</SheetButton>
+          </div>
+        </Overlay>
+      )}
+
+      {cancelStartOpen && (
+        <Overlay onClose={() => setCancelStartOpen(false)}>
+          <h2 className="mb-1 text-2xl font-bold">Cancel this workout start?</h2>
+          <p className="mb-3 text-sm text-zinc-400">
+            No training has been logged yet. This returns the day to its normal
+            unstarted state and removes the workout.
+          </p>
+          <div className="mt-5 space-y-3">
+            <SheetButton primary onClick={cancelStart}>
+              CANCEL START
+            </SheetButton>
+            <SheetButton onClick={() => setCancelStartOpen(false)}>KEEP WORKOUT OPEN</SheetButton>
           </div>
         </Overlay>
       )}
@@ -802,11 +926,21 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
 function statusIcon(status: ExerciseStatus) {
   if (status === "completed") return "✓";
   if (status === "skipped") return "–";
+  if (status === "replaced") return "↷";
   return "○";
 }
 
 function reasonLabel(key: string) {
-  const all = [...SKIP_REASONS, ...END_EARLY_REASONS];
+  const all = [
+    ...SKIP_REASONS,
+    ...END_EARLY_REASONS,
+    { key: "equipment_busy", label: "Equipment busy" },
+    { key: "equipment_unavailable", label: "Equipment unavailable" },
+    { key: "pain_discomfort", label: "Pain / discomfort" },
+    { key: "preference", label: "Prefer something else" },
+    { key: "coach_adjustment", label: "Coach adjustment" },
+    { key: "other", label: "Other" },
+  ];
   return all.find((r) => r.key === key)?.label ?? key;
 }
 

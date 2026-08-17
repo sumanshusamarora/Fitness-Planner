@@ -14,7 +14,7 @@ license: MIT
 compatibility: Requires this repository's local PostgreSQL database and npm scripts.
 metadata:
   author: fitness-planner
-  version: 1.1.0
+  version: 1.2.0
 allowed-tools: Read Glob Grep Bash(npm run coach:*)
 ---
 
@@ -104,6 +104,7 @@ planning.
 - [Exercise selection](references/exercise-selection.md) — substitutions and stability.
 - [Exercise catalogue](references/exercise-catalogue.md) — external reference/discovery data and mapping rules.
 - [Scheduling](references/scheduling.md) — intra-week flexibility and rest-day sessions.
+- [Future-plan reversibility](references/reversibility.md) — Remove Extra vs Skip, move/swap restore, Cancel Start, and Undo Skip; historical states are immutable and reversals are deterministic (never GPT-5).
 - [Coaching principles](references/coaching-principles.md) — general programming decisions.
 - [Safety](references/safety.md) — pain and scope boundaries. Load every time.
 - [Research policy](references/research-policy.md) — when external research is justified.

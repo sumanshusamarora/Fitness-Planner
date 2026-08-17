@@ -1,10 +1,7 @@
-import { and, count, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { db } from "@/db";
-import { workoutSessionExercises, workoutSets } from "@/db/schema";
 import { currentUserOrNull } from "@/lib/session";
-import { DomainError, toErrorBody } from "@/lib/errors";
-import { requireInProgressSession } from "@/lib/session-guards";
+import { toErrorBody } from "@/lib/errors";
+import { logSessionSet } from "@/lib/session-activities";
 
 export async function POST(
   req: Request,
@@ -18,8 +15,6 @@ export async function POST(
   const sessionId = Number(id);
 
   try {
-    await requireInProgressSession(user.id, sessionId);
-
     const body = (await req.json()) as {
       exerciseId?: number;
       weightKg?: number;
@@ -49,48 +44,13 @@ export async function POST(
       return NextResponse.json({ error: "Enter a weight or reps." }, { status: 400 });
     }
 
-    const sse = (
-      await db
-        .select()
-        .from(workoutSessionExercises)
-        .where(
-          and(
-            eq(workoutSessionExercises.workoutSessionId, sessionId),
-            eq(workoutSessionExercises.exerciseId, exerciseId),
-          ),
-        )
-        .limit(1)
-    )[0];
-
-    if (!sse) {
-      return NextResponse.json({ error: "Exercise not found in session" }, { status: 404 });
-    }
-    if (sse.status === "replaced") {
-      throw new DomainError(
-        "This exercise was replaced; log your sets on the replacement instead.",
-        "EXERCISE_ALREADY_FINALIZED",
-        409,
-      );
-    }
-
-    const existing = await db
-      .select({ c: count() })
-      .from(workoutSets)
-      .where(eq(workoutSets.workoutSessionExerciseId, sse.id));
-
-    const setNumber = (existing[0]?.c ?? 0) + 1;
-
-    const [set] = await db
-      .insert(workoutSets)
-      .values({
-        workoutSessionExerciseId: sse.id,
-        setNumber,
-        weightKg,
-        reps,
-        rpe,
-        setType,
-      })
-      .returning();
+    const set = await logSessionSet(user.id, sessionId, {
+      exerciseId,
+      weightKg,
+      reps,
+      rpe,
+      setType,
+    });
 
     return NextResponse.json({ setId: set.id });
   } catch (error) {

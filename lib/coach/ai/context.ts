@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, lte, ne } from "drizzle-orm";
+import { and, asc, desc, eq, gte, gt, inArray, lte, ne } from "drizzle-orm";
 import { db } from "@/db";
 import {
   exercises,
@@ -406,15 +406,16 @@ export async function buildRollingCoachContext(input: {
       .innerJoin(workoutSessionExercises, eq(workoutSets.workoutSessionExerciseId, workoutSessionExercises.id))
       .innerJoin(workoutSessions, eq(workoutSessionExercises.workoutSessionId, workoutSessions.id))
       .innerJoin(exercises, eq(workoutSessionExercises.exerciseId, exercises.id))
-      .where(
-        and(
-          eq(workoutSessions.userId, input.userId),
-          eq(workoutSessions.status, "completed"),
-          eq(workoutSets.setType, "working"),
-          gte(workoutSessions.completedAt, new Date(`${windowStartISO}T00:00:00Z`)),
-          lte(workoutSessions.completedAt, new Date(`${anchorDateISO}T23:59:59.999Z`)),
-        ),
-      )
+.where(
+          and(
+            eq(workoutSessions.userId, input.userId),
+            eq(workoutSessions.status, "completed"),
+            eq(workoutSets.setType, "working"),
+            gt(workoutSets.reps, 0),
+            gte(workoutSessions.completedAt, new Date(`${windowStartISO}T00:00:00Z`)),
+            lte(workoutSessions.completedAt, new Date(`${anchorDateISO}T23:59:59.999Z`)),
+          ),
+        )
       .orderBy(asc(workoutSessions.completedAt), asc(workoutSets.setNumber)),
     db
       .select({
