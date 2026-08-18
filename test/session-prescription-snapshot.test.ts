@@ -28,6 +28,7 @@ import {
   getSessionSummary,
 } from "@/lib/workouts";
 import { buildProgressAnalytics } from "@/lib/progress";
+import { isMeasurementType } from "@/lib/exercise-measurement";
 import {
   buildRecentActualSummary,
   logSessionSet,
@@ -102,6 +103,7 @@ test("session start freezes a prescription snapshot equal to the plan", async ()
   for (const pe of snapshot.exercises) {
     const plan = planMap.get(pe.exerciseId);
     assert.ok(plan, "snapshot exercise is part of the plan");
+    assert.equal(isMeasurementType(pe.measurementType), true, "snapshot preserves a canonical measurement type");
     assert.equal(pe.targetSets, plan.targetSets);
     assert.equal(pe.minReps, plan.minReps);
     assert.equal(pe.maxReps, plan.maxReps);
@@ -225,7 +227,7 @@ test("restore rejects after a warm-up set too", async () => {
   assert.ok(replacementId);
   const session = await createSession(user.id, day.id);
   await replaceSessionExercise(user.id, session.id, exs[0].exerciseId, replacementId, "pain_discomfort");
-  await logSessionSet(user.id, session.id, { exerciseId: replacementId, weightKg: 0, reps: 5, rpe: 4, setType: "warmup" });
+  await logSessionSet(user.id, session.id, { exerciseId: replacementId, weightKg: 20, reps: 5, rpe: 4, setType: "warmup" });
 
   await assert.rejects(
     () => restoreSessionExercise(user.id, session.id, exs[0].exerciseId),

@@ -120,7 +120,12 @@ export async function getSessionPlanSnapshot(
     exercises: rows.map((row) => ({
       exerciseId: row.exerciseId,
       name: row.name,
-      measurementType: row.measurementType ?? "weighted_reps",
+      measurementType: measurementTypeFor({
+        measurementType: row.measurementType,
+        category: null,
+        equipment: null,
+        name: row.name,
+      }),
       position: row.position,
       targetSets: row.targetSets,
       minReps: row.minReps,
@@ -945,6 +950,7 @@ export async function getSessionHistory(userId: number): Promise<HistoryEntry[]>
 
 export interface SessionDetailExercise {
   name: string;
+  measurementType: string;
   status: string | null;
   skipReason: string | null;
   origin: string | null;
@@ -1020,12 +1026,30 @@ export async function getSessionDetail(
   const unknownIds = [
     ...new Set(sseRows.filter((sse) => !nameByExerciseId.has(sse.exerciseId)).map((sse) => sse.exerciseId)),
   ];
+  const metaByExerciseId = new Map<number, { measurementType: string | null; category: string | null; equipment: string | null }>();
   if (unknownIds.length) {
     const rows = await db
-      .select({ id: exercises.id, name: exercises.name })
+      .select({ id: exercises.id, name: exercises.name, measurementType: exercises.measurementType, category: exercises.category, equipment: exercises.equipment })
       .from(exercises)
       .where(inArray(exercises.id, unknownIds));
-    for (const row of rows) nameByExerciseId.set(row.id, row.name);
+    for (const row of rows) {
+      nameByExerciseId.set(row.id, row.name);
+      metaByExerciseId.set(row.id, {
+        measurementType: row.measurementType,
+        category: row.category,
+        equipment: row.equipment,
+      });
+    }
+  }
+
+  if (snapshot) {
+    for (const pe of snapshot.exercises) {
+      metaByExerciseId.set(pe.exerciseId, {
+        measurementType: pe.measurementType,
+        category: null,
+        equipment: null,
+      });
+    }
   }
 
   const sseById = new Map(sseRows.map((row) => [row.id, row]));
@@ -1066,6 +1090,12 @@ export async function getSessionDetail(
 
     exercisesData.push({
       name: nameByExerciseId.get(sse.exerciseId) ?? "Exercise",
+      measurementType: measurementTypeFor({
+        measurementType: metaByExerciseId.get(sse.exerciseId)?.measurementType ?? null,
+        category: metaByExerciseId.get(sse.exerciseId)?.category ?? null,
+        equipment: metaByExerciseId.get(sse.exerciseId)?.equipment ?? null,
+        name: nameByExerciseId.get(sse.exerciseId) ?? "Exercise",
+      }),
       status: sse.status,
       skipReason: sse.skipReason,
       origin: sse.origin,

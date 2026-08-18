@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { formatShortDate, formatWeight } from "@/lib/dates";
+import { formatShortDate } from "@/lib/dates";
+import { formatLoggedSetForDisplay, isMeasurementType, measurementTypeFor } from "@/lib/exercise-measurement";
 import { requireCurrentUser } from "@/lib/session";
 import { getSessionDetail } from "@/lib/workouts";
 
@@ -123,8 +124,17 @@ export default async function HistorySessionPage({
               <div className="mt-3 space-y-1 text-sm text-zinc-300">
                 {exercise.sets.map((set) => (
                   <p key={set.setNumber}>
-                    Set {set.setNumber} · {set.setType === "warmup" ? "Warm-up" : "Working"} · {formatWeight(set.weightKg)} kg × {set.reps}
-                    {set.rpe != null && ` @ RPE ${set.rpe}`}
+                    Set {set.setNumber} · {set.setType === "warmup" ? "Warm-up" : "Working"} · {formatLoggedSetForDisplay(
+                      isMeasurementType(exercise.measurementType)
+                        ? exercise.measurementType
+                        : measurementTypeFor({
+                            measurementType: exercise.measurementType,
+                            category: null,
+                            equipment: null,
+                            name: exercise.name,
+                          }),
+                      set,
+                    )}
                   </p>
                 ))}
               </div>

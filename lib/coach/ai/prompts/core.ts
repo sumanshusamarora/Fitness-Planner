@@ -125,6 +125,7 @@ export const CORE_MEASUREMENT_SEMANTICS = `MEASUREMENT SEMANTICS:
 Not every exercise requires weight. Respect each exercise's measurement type:
 - weighted_reps: external load + reps.
 - bodyweight_reps: no external load required; reps are sufficient.
+- assisted_reps: assistance + reps; less assistance at similar reps/RPE means improvement.
 - timed_hold: seconds (e.g. plank).
 - duration: time (e.g. mobility/stretching).
 - distance_duration: duration with optional distance/speed/incline (e.g. treadmill).

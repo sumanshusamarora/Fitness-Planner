@@ -13,6 +13,11 @@ import {
   workoutSets,
 } from "@/db/schema";
 import { addDaysToISODate, toISODate } from "@/lib/dates";
+import {
+  formatLoggedSetForDisplay,
+  measurementTypeFor,
+  type MeasurementType,
+} from "@/lib/exercise-measurement";
 import { getLatestRecoverySnapshot } from "@/lib/recovery";
 import { getTrainingProfile } from "@/lib/training-profile";
 import type { RecoverySnapshot } from "@/lib/progression";
@@ -41,12 +46,14 @@ export interface RollingWorkoutEntry {
 export interface RollingExercisePerformance {
   exerciseId: number;
   exerciseName: string;
+  measurementType: MeasurementType;
   primaryMuscle: string;
   equipment: string;
   sets: number;
   latestWeightKg: number | null;
   latestReps: number;
   latestRpe: number | null;
+  latestPerformance: string | null;
   lastExposureDateISO: string | null;
   daysSinceLastExposure: number | null;
 }
@@ -147,6 +154,8 @@ export interface PastTrainingWindowInput {
     dateISO: string;
     exerciseId: number;
     exerciseName: string;
+    measurementType: string | null;
+    category: string | null;
     primaryMuscle: string;
     equipment: string;
     weightKg: number;
@@ -175,12 +184,19 @@ export function assemblePastTraining(input: PastTrainingWindowInput): PastTraini
     const entry = byExercise.get(set.exerciseId) ?? {
       exerciseId: set.exerciseId,
       exerciseName: set.exerciseName,
+      measurementType: measurementTypeFor({
+        measurementType: set.measurementType,
+        category: set.category,
+        equipment: set.equipment,
+        name: set.exerciseName,
+      }),
       primaryMuscle: set.primaryMuscle,
       equipment: set.equipment,
       sets: 0,
       latestWeightKg: null,
       latestReps: 0,
       latestRpe: null,
+      latestPerformance: null,
       lastExposureDateISO: null,
       daysSinceLastExposure: null,
     };
@@ -195,6 +211,11 @@ export function assemblePastTraining(input: PastTrainingWindowInput): PastTraini
       entry.latestWeightKg = set.weightKg;
       entry.latestReps = set.reps;
       entry.latestRpe = set.rpe;
+      entry.latestPerformance = formatLoggedSetForDisplay(entry.measurementType, {
+        weightKg: set.weightKg,
+        reps: set.reps,
+        rpe: set.rpe,
+      });
     }
     byExercise.set(set.exerciseId, entry);
     muscleSets.set(set.primaryMuscle, (muscleSets.get(set.primaryMuscle) ?? 0) + 1);
@@ -396,6 +417,8 @@ export async function buildRollingCoachContext(input: {
         completedAt: workoutSessions.completedAt,
         exerciseId: exercises.id,
         exerciseName: exercises.name,
+        measurementType: exercises.measurementType,
+        category: exercises.category,
         primaryMuscle: exercises.primaryMuscle,
         equipment: exercises.equipment,
         weightKg: workoutSets.weightKg,
@@ -585,6 +608,8 @@ export async function buildRollingCoachContext(input: {
         dateISO: toISODate(row.completedAt!),
         exerciseId: row.exerciseId,
         exerciseName: row.exerciseName,
+        measurementType: row.measurementType,
+        category: row.category,
         primaryMuscle: row.primaryMuscle,
         equipment: row.equipment,
         weightKg: row.weightKg,

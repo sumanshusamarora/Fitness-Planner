@@ -3,6 +3,15 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { formatWeight } from "@/lib/dates";
+import {
+  formatLoggedSetForDisplay,
+  formatPrescriptionTarget,
+  isMeasurementType,
+  measurementTypeFor,
+  requiresLoadField,
+  type MeasurementType,
+  validateLoggedSet,
+} from "@/lib/exercise-measurement";
 import { routes } from "@/lib/routes";
 import { smallestIncrement } from "@/lib/progression";
 import { Stepper } from "@/components/Stepper";
@@ -225,9 +234,18 @@ export function ActiveWorkout({ data, nav }: { data: ActiveWorkoutData; nav?: Ac
 
   const ex = exercises[index];
   const draft = drafts[ex.exerciseId] ?? { weight: ex.suggestedWeightKg ?? ex.lastTime?.weightKg ?? 0, reps: ex.maxReps };
-  const measurement = ex.measurementType;
+  const measurement: MeasurementType = isMeasurementType(ex.measurementType)
+    ? ex.measurementType
+    : measurementTypeFor({
+        measurementType: ex.measurementType,
+        category: null,
+        equipment: null,
+        name: ex.name,
+      });
   const isWeighted = measurement === "weighted_reps";
-  const isTimed = measurement === "timed_hold";
+  const isAssisted = measurement === "assisted_reps";
+  const usesTime = measurement === "timed_hold" || measurement === "duration" || measurement === "distance_duration";
+  const needsLoad = requiresLoadField(measurement);
   const workingCount = ex.loggedSets.filter((s) => s.setType === "working").length;
   const setNumber = ex.loggedSets.length + 1;
   const weightStep = smallestIncrement(draft.weight) || 2.5;
@@ -235,6 +253,11 @@ export function ActiveWorkout({ data, nav }: { data: ActiveWorkoutData; nav?: Ac
   const completedCount = exercises.filter((e) => e.status === "completed").length;
   const skippedCount = exercises.filter((e) => e.status === "skipped").length;
   const replacedCount = exercises.filter((e) => e.status === "replaced").length;
+  const draftValidation = validateLoggedSet(measurement, {
+    weightKg: needsLoad ? draft.weight : 0,
+    reps: draft.reps,
+    rpe: 6,
+  });
 
   function updateDraft(patch: Partial<{ weight: number; reps: number }>) {
     setDrafts((prev) => ({
@@ -270,7 +293,7 @@ export function ActiveWorkout({ data, nav }: { data: ActiveWorkoutData; nav?: Ac
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           exerciseId: ex.exerciseId,
-          weightKg: isWeighted ? draft.weight : 0,
+          weightKg: needsLoad ? draft.weight : 0,
           reps: draft.reps,
           rpe,
           setType,
@@ -285,7 +308,7 @@ export function ActiveWorkout({ data, nav }: { data: ActiveWorkoutData; nav?: Ac
       const newSet: LoggedSet = {
         id: payload.set?.id ?? Date.now(),
         setNumber: payload.set?.setNumber ?? ex.loggedSets.length + 1,
-        weightKg: payload.set?.weightKg ?? (isWeighted ? draft.weight : 0),
+        weightKg: payload.set?.weightKg ?? (needsLoad ? draft.weight : 0),
         reps: payload.set?.reps ?? draft.reps,
         rpe: payload.set?.rpe ?? rpe,
         setType: payload.set?.setType ?? setType,
@@ -423,7 +446,7 @@ export function ActiveWorkout({ data, nav }: { data: ActiveWorkoutData; nav?: Ac
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          weightKg: setEditorWeight,
+          weightKg: needsLoad ? setEditorWeight : 0,
           reps: setEditorReps,
           rpe: setEditorRpe,
           setType: setEditorType,
@@ -738,8 +761,13 @@ export function ActiveWorkout({ data, nav }: { data: ActiveWorkoutData; nav?: Ac
               <div className="mt-4 rounded-2xl bg-zinc-800/60 p-4">
                 <p className="text-xs uppercase tracking-widest text-zinc-400">Last time</p>
                 <p className="mt-1 text-lg font-semibold">
-                  {formatWeight(ex.lastTime.weightKg)} kg · {ex.lastTime.reps} reps
-                  {ex.lastTime.rpe != null && ` · RPE ${ex.lastTime.rpe}`}
+                  {isWeighted && ex.lastTime.weightKg != null
+                    ? `${formatWeight(ex.lastTime.weightKg)} kg x ${ex.lastTime.reps} reps${ex.lastTime.rpe != null ? ` @ RPE ${ex.lastTime.rpe}` : ""}`
+                    : isAssisted && ex.lastTime.weightKg != null
+                      ? `${formatWeight(ex.lastTime.weightKg)} kg assistance x ${ex.lastTime.reps} reps${ex.lastTime.rpe != null ? ` @ RPE ${ex.lastTime.rpe}` : ""}`
+                      : usesTime
+                        ? `${ex.lastTime.reps} sec${ex.lastTime.rpe != null ? ` @ RPE ${ex.lastTime.rpe}` : ""}`
+                        : `${ex.lastTime.reps} reps${ex.lastTime.rpe != null ? ` @ RPE ${ex.lastTime.rpe}` : ""}`}
                 </p>
               </div>
             )}
@@ -747,9 +775,14 @@ export function ActiveWorkout({ data, nav }: { data: ActiveWorkoutData; nav?: Ac
             <div className="mt-4">
               <p className="text-xs uppercase tracking-widest text-zinc-400">Today</p>
               <p className="mt-1 text-lg font-semibold">
-                {formatWeight(ex.suggestedWeightKg)} kg · {ex.targetSets} set
-                {ex.targetSets > 1 ? "s" : ""} × {ex.minReps}–{ex.maxReps} reps · RPE{" "}
-                {ex.targetRpe}
+                {formatPrescriptionTarget({
+                  measurementType: measurement,
+                  targetSets: ex.targetSets,
+                  minReps: ex.minReps,
+                  maxReps: ex.maxReps,
+                  targetRpe: ex.targetRpe,
+                  suggestedWeightKg: ex.suggestedWeightKg,
+                })}
               </p>
               {ex.recommendationReason && (
                 <p className="mt-1 text-sm text-zinc-500">{ex.recommendationReason}</p>
@@ -762,8 +795,7 @@ export function ActiveWorkout({ data, nav }: { data: ActiveWorkoutData; nav?: Ac
                 {ex.loggedSets.map((set) => (
                   <div key={set.id} className="flex items-center justify-between rounded-xl bg-zinc-900 px-3 py-2 text-sm">
                     <span>
-                      Set {set.setNumber} · {set.setType === "warmup" ? "Warm-up" : "Working"} · {formatWeight(set.weightKg)} kg × {set.reps}
-                      {set.rpe != null && ` @ RPE ${set.rpe}`}
+                      Set {set.setNumber} · {set.setType === "warmup" ? "Warm-up" : "Working"} · {formatLoggedSetForDisplay(measurement, set)}
                     </span>
                     <button
                       type="button"
@@ -793,9 +825,9 @@ export function ActiveWorkout({ data, nav }: { data: ActiveWorkoutData; nav?: Ac
               Set {setNumber} of {ex.targetSets}
             </p>
             <div className="space-y-4">
-              {isWeighted && (
+              {needsLoad && (
                 <Stepper
-                  label="Weight"
+                  label={isAssisted ? "Assistance" : "Weight"}
                   value={draft.weight}
                   step={weightStep}
                   unit="kg"
@@ -803,21 +835,31 @@ export function ActiveWorkout({ data, nav }: { data: ActiveWorkoutData; nav?: Ac
                   onChange={(v) => updateDraft({ weight: v })}
                 />
               )}
-              {!isWeighted && !isTimed && (
+              {measurement === "bodyweight_reps" && (
                 <p className="rounded-2xl bg-zinc-800/60 p-3 text-sm text-zinc-400">
                   Bodyweight — no external load needed.
                 </p>
               )}
-              {isTimed && (
+              {measurement === "timed_hold" && (
                 <p className="rounded-2xl bg-zinc-800/60 p-3 text-sm text-zinc-400">
                   Timed hold — record seconds.
                 </p>
               )}
+              {measurement === "duration" && (
+                <p className="rounded-2xl bg-zinc-800/60 p-3 text-sm text-zinc-400">
+                  Duration-based movement — record seconds.
+                </p>
+              )}
+              {measurement === "distance_duration" && (
+                <p className="rounded-2xl bg-zinc-800/60 p-3 text-sm text-zinc-400">
+                  Duration-based movement — record seconds (distance/speed stays in activities).
+                </p>
+              )}
               <Stepper
-                label={isTimed ? "Seconds" : "Reps"}
+                label={usesTime ? "Seconds" : "Reps"}
                 value={draft.reps}
-                step={isTimed ? 5 : 1}
-                unit={isTimed ? "sec" : "reps"}
+                step={usesTime ? 5 : 1}
+                unit={usesTime ? "sec" : "reps"}
                 onChange={(v) => updateDraft({ reps: v })}
               />
               <label className="flex items-center gap-3 rounded-2xl bg-zinc-800/60 p-3 text-sm text-zinc-300">
@@ -834,7 +876,7 @@ export function ActiveWorkout({ data, nav }: { data: ActiveWorkoutData; nav?: Ac
             <button
               type="button"
               onClick={() => setPhase("rpe")}
-              disabled={saving || draft.reps <= 0 || (isWeighted && draft.weight <= 0)}
+              disabled={saving || !draftValidation.ok}
               className="mt-6 w-full rounded-2xl bg-emerald-500 py-4 text-lg font-bold text-zinc-950 transition active:scale-[0.98] disabled:opacity-60"
             >
               COMPLETE SET
@@ -850,7 +892,11 @@ export function ActiveWorkout({ data, nav }: { data: ActiveWorkoutData; nav?: Ac
           </p>
           <h2 className="mt-2 text-3xl font-bold">How hard was that set?</h2>
           <p className="mt-1 text-zinc-400">
-            {isWeighted ? `${formatWeight(draft.weight)} kg × ${draft.reps} reps` : isTimed ? `${draft.reps} seconds` : `${draft.reps} reps`}
+            {formatLoggedSetForDisplay(measurement, {
+              weightKg: needsLoad ? draft.weight : 0,
+              reps: draft.reps,
+              rpe: null,
+            })}
             {warmup && " · warm-up"}
           </p>
           <div className="mt-6 grid grid-cols-3 gap-3">
@@ -909,8 +955,7 @@ export function ActiveWorkout({ data, nav }: { data: ActiveWorkoutData; nav?: Ac
               {ex.loggedSets.map((s) => (
                 <div key={s.id} className="flex items-center justify-between rounded-xl bg-zinc-800 px-3 py-2 text-sm">
                   <span>
-                    Set {s.setNumber} · {s.setType === "warmup" ? "Warm-up" : "Working"} · {formatWeight(s.weightKg)} kg × {s.reps}
-                    {s.rpe != null && ` @ RPE ${s.rpe}`}
+                    Set {s.setNumber} · {s.setType === "warmup" ? "Warm-up" : "Working"} · {formatLoggedSetForDisplay(measurement, s)}
                   </span>
                   <button
                     type="button"
@@ -1248,19 +1293,21 @@ export function ActiveWorkout({ data, nav }: { data: ActiveWorkoutData; nav?: Ac
         <Overlay onClose={() => setSetEditor(null)}>
           <h2 className="mb-3 text-2xl font-bold">Edit set</h2>
           <div className="space-y-4">
+            {needsLoad && (
+              <Stepper
+                label={isAssisted ? "Assistance" : "Weight"}
+                value={setEditorWeight}
+                step={smallestIncrement(setEditorWeight) || 2.5}
+                unit="kg"
+                format={formatWeight}
+                onChange={setSetEditorWeight}
+              />
+            )}
             <Stepper
-              label="Weight"
-              value={setEditorWeight}
-              step={smallestIncrement(setEditorWeight) || 2.5}
-              unit="kg"
-              format={formatWeight}
-              onChange={setSetEditorWeight}
-            />
-            <Stepper
-              label={measurement === "timed_hold" ? "Seconds" : "Reps"}
+              label={usesTime ? "Seconds" : "Reps"}
               value={setEditorReps}
-              step={measurement === "timed_hold" ? 5 : 1}
-              unit={measurement === "timed_hold" ? "sec" : "reps"}
+              step={usesTime ? 5 : 1}
+              unit={usesTime ? "sec" : "reps"}
               onChange={setSetEditorReps}
             />
             <div className="grid grid-cols-2 gap-2">

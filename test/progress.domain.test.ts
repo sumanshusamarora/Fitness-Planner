@@ -20,6 +20,7 @@ import type {
 
 const chest: ExerciseMeta = { exerciseId: 1, name: "Machine Chest Press", equipment: "Machine", category: "strength", primaryMuscle: "Chest", measurementType: null };
 const plank: ExerciseMeta = { exerciseId: 2, name: "Plank", equipment: "Bodyweight", category: "core", primaryMuscle: "Core", measurementType: null };
+const assistedPullup: ExerciseMeta = { exerciseId: 3, name: "Assisted Pull-Up", equipment: "Assisted Machine", category: "strength", primaryMuscle: "Back", measurementType: "assisted_reps" };
 
 function exp(sessionId: number, dateISO: string, sets: { weightKg: number; reps: number; rpe: number | null }[]): ExerciseExposure {
   return { sessionId, completedAt: dateISO, outcome: "attempted", skipReason: null, sets };
@@ -252,6 +253,18 @@ test("bodyweight movements never produce an estimated 1RM", () => {
     exp(2, "2026-08-08", [{ weightKg: 0, reps: 35, rpe: 6 }]),
     exp(3, "2026-08-15", [{ weightKg: 0, reps: 40, rpe: 6 }]),
   ]);
+  assert.equal(result.supportsCapacityEstimate, false);
+  assert.equal(result.capacityTrend, "unsupported");
+  assert.ok(improvingFamily.includes(result.direction), `expected improving, got ${result.direction}`);
+});
+
+test("assisted reps treat lower assistance as improved performance", () => {
+  const result = analyzeExercise(assistedPullup, [
+    exp(1, "2026-08-01", [{ weightKg: 35, reps: 8, rpe: 7 }]),
+    exp(2, "2026-08-08", [{ weightKg: 30, reps: 8, rpe: 7 }]),
+    exp(3, "2026-08-15", [{ weightKg: 25, reps: 8, rpe: 7 }]),
+  ]);
+  assert.equal(result.loadTrend, "increasing");
   assert.equal(result.supportsCapacityEstimate, false);
   assert.equal(result.capacityTrend, "unsupported");
   assert.ok(improvingFamily.includes(result.direction), `expected improving, got ${result.direction}`);

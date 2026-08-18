@@ -11,6 +11,7 @@ import {
   workoutSets,
 } from "@/db/schema";
 import { DomainError } from "@/lib/errors";
+import { measurementTypeFor, validateLoggedSet } from "@/lib/exercise-measurement";
 import { requireInProgressSession } from "@/lib/session-guards";
 
 /**
@@ -337,8 +338,17 @@ export async function logSessionSet(
 
   const sse = (
     await db
-      .select()
+      .select({
+        id: workoutSessionExercises.id,
+        status: workoutSessionExercises.status,
+        exerciseId: workoutSessionExercises.exerciseId,
+        measurementType: exercises.measurementType,
+        category: exercises.category,
+        equipment: exercises.equipment,
+        name: exercises.name,
+      })
       .from(workoutSessionExercises)
+      .innerJoin(exercises, eq(workoutSessionExercises.exerciseId, exercises.id))
       .where(
         and(
           eq(workoutSessionExercises.workoutSessionId, sessionId),
@@ -355,6 +365,25 @@ export async function logSessionSet(
       "This exercise was replaced; log your sets on the replacement instead.",
       "EXERCISE_REPLACED",
       409,
+    );
+  }
+
+  const measurementType = measurementTypeFor({
+    measurementType: sse.measurementType,
+    category: sse.category,
+    equipment: sse.equipment,
+    name: sse.name,
+  });
+  const validation = validateLoggedSet(measurementType, {
+    weightKg: input.weightKg,
+    reps: input.reps,
+    rpe: input.rpe,
+  });
+  if (!validation.ok) {
+    throw new DomainError(
+      validation.error ?? "Invalid set data for this exercise.",
+      "INVALID_SET_INPUT",
+      400,
     );
   }
 
@@ -398,12 +427,20 @@ export async function updateSessionSet(
     await db
       .select({
         setId: workoutSets.id,
+        weightKg: workoutSets.weightKg,
+        reps: workoutSets.reps,
+        rpe: workoutSets.rpe,
+        measurementType: exercises.measurementType,
+        category: exercises.category,
+        equipment: exercises.equipment,
+        name: exercises.name,
       })
       .from(workoutSets)
       .innerJoin(
         workoutSessionExercises,
         eq(workoutSets.workoutSessionExerciseId, workoutSessionExercises.id),
       )
+      .innerJoin(exercises, eq(workoutSessionExercises.exerciseId, exercises.id))
       .where(
         and(
           eq(workoutSets.id, setId),
@@ -414,6 +451,26 @@ export async function updateSessionSet(
   )[0];
   if (!row) {
     throw new DomainError("Set not found.", "SET_NOT_FOUND", 404);
+  }
+
+  const nextSet = {
+    weightKg: input.weightKg ?? row.weightKg,
+    reps: input.reps ?? row.reps,
+    rpe: input.rpe === undefined ? row.rpe : input.rpe,
+  };
+  const measurementType = measurementTypeFor({
+    measurementType: row.measurementType,
+    category: row.category,
+    equipment: row.equipment,
+    name: row.name,
+  });
+  const validation = validateLoggedSet(measurementType, nextSet);
+  if (!validation.ok) {
+    throw new DomainError(
+      validation.error ?? "Invalid set data for this exercise.",
+      "INVALID_SET_INPUT",
+      400,
+    );
   }
 
   const [updated] = await db

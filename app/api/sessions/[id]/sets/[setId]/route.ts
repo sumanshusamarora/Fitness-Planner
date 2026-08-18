@@ -35,10 +35,6 @@ export async function PUT(
   if (patch.rpe != null && (!Number.isFinite(patch.rpe) || patch.rpe < 1 || patch.rpe > 10)) {
     return NextResponse.json({ error: "Invalid RPE." }, { status: 400 });
   }
-  if (patch.weightKg != null && patch.reps != null && patch.weightKg <= 0 && patch.reps <= 0) {
-    return NextResponse.json({ error: "Enter a weight or reps." }, { status: 400 });
-  }
-
   try {
     const set = await updateSessionSet(user.id, Number(id), Number(setId), patch);
     return NextResponse.json({ set });

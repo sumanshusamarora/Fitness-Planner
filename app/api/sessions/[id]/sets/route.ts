@@ -38,12 +38,6 @@ export async function POST(
       return NextResponse.json({ error: "Invalid weight or reps" }, { status: 400 });
     }
 
-    // Bodyweight / timed-hold movements legitimately log weight 0. A set needs
-    // either a weight OR a rep/time value; never both missing.
-    if (reps <= 0 && weightKg <= 0) {
-      return NextResponse.json({ error: "Enter a weight or reps." }, { status: 400 });
-    }
-
     const set = await logSessionSet(user.id, sessionId, {
       exerciseId,
       weightKg,

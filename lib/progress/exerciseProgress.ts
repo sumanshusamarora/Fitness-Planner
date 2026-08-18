@@ -1,4 +1,5 @@
 import { estimateExposureCapacity, isWeightedResistance } from "./strengthEstimate";
+import { measurementTypeFor } from "@/lib/exercise-measurement";
 import type {
   AdaptationDirection,
   ExerciseExposure,
@@ -95,6 +96,14 @@ function classifyTrend(deltaPct: number, threshold: number): TrendDirection {
   return "stable";
 }
 
+function classifyAssistanceTrend(deltaPct: number, threshold: number): TrendDirection {
+  if (!Number.isFinite(deltaPct)) return "stable";
+  // Lower assistance means better capability.
+  if (deltaPct <= -threshold) return "increasing";
+  if (deltaPct >= threshold) return "decreasing";
+  return "stable";
+}
+
 /** Absolute-value trend for rep counts (a ±1 rep change is meaningful). */
 function classifyAbsoluteTrend(delta: number, threshold: number): TrendDirection {
   if (!Number.isFinite(delta)) return "stable";
@@ -162,6 +171,7 @@ export function analyzeExercise(
   exercise: ExerciseMeta,
   exposures: ExerciseExposure[],
 ): ExerciseProgress {
+  const measurementType = measurementTypeFor(exercise);
   const attempted = exposures.filter((exposure) => exposure.outcome === "attempted");
   const skipped = exposures.filter((exposure) => exposure.outcome === "skipped").length;
   const notAttempted = exposures.filter((exposure) => exposure.outcome === "not_attempted").length;
@@ -230,7 +240,11 @@ export function analyzeExercise(
   const repHalves = halves(reps);
   const rpeHalves = halves(rpes);
 
-  const loadTrend: TrendDirection = loadHalves ? classifyTrend(loadHalves.deltaPct, LOAD_CHANGE_PCT * 100) : "insufficient_data";
+  const loadTrend: TrendDirection = loadHalves
+    ? measurementType === "assisted_reps"
+      ? classifyAssistanceTrend(loadHalves.deltaPct, LOAD_CHANGE_PCT * 100)
+      : classifyTrend(loadHalves.deltaPct, LOAD_CHANGE_PCT * 100)
+    : "insufficient_data";
   const repTrend: TrendDirection = repHalves ? classifyAbsoluteTrend(repHalves.delta, REP_CHANGE_PER_SET) : "insufficient_data";
   const rpeTrend: TrendDirection = rpeHalves ? classifyRpeTrend(rpeHalves.delta) : "insufficient_data";
 
@@ -288,7 +302,13 @@ export function analyzeExercise(
   }
 
   base.evidence.push(`${exposureCount} attempted exposures analysed.`);
-  if (loadTrend !== "insufficient_data") base.evidence.push(`Load trend ${loadTrend}.`);
+  if (loadTrend !== "insufficient_data") {
+    if (measurementType === "assisted_reps") {
+      base.evidence.push(`Assistance-normalized trend ${loadTrend}.`);
+    } else {
+      base.evidence.push(`Load trend ${loadTrend}.`);
+    }
+  }
   if (repTrend !== "insufficient_data") base.evidence.push(`Reps per set trend ${repTrend}.`);
   if (rpeTrend !== "insufficient_data") base.evidence.push(`RPE trend ${rpeTrend}.`);
   if (supportsCapacity && base.weeklyRatePct != null) {

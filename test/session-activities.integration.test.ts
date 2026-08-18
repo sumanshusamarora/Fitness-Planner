@@ -4,6 +4,7 @@ import { after, test } from "node:test";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import {
+  exercises,
   planAdjustmentProposals,
   planRevisions,
   recoveryLogs,
@@ -238,6 +239,65 @@ test("in-progress set correction allows edit/remove; terminal sessions reject se
     () => removeSessionSet(u.id, sessionId, set2.id),
     /finalised/,
   );
+});
+
+test("measurement-aware set edit enforces load rules by exercise type", async () => {
+  const stamp = Date.now();
+  const [u] = await db.insert(users).values({ name: `Act M ${stamp}`, username: `act-m-${stamp}`, usernameNormalized: `act-m-${stamp}` }).returning();
+  a.userId = u.id;
+  a.planId = (await createInitialWeek(u.id))!;
+
+  const day = await db
+    .select({ id: workoutPlanDays.id })
+    .from(workoutPlanDays)
+    .where(and(eq(workoutPlanDays.workoutPlanId, a.planId), eq(workoutPlanDays.dayNumber, 1)))
+    .limit(1);
+  const dayId = day[0].id;
+
+  const weightedPlan = await db
+    .select({ exerciseId: workoutPlanExercises.exerciseId })
+    .from(workoutPlanExercises)
+    .innerJoin(exercises, eq(workoutPlanExercises.exerciseId, exercises.id))
+    .where(and(eq(workoutPlanExercises.workoutPlanDayId, dayId), eq(exercises.equipment, "Machine")))
+    .limit(1);
+  const bodyweightPlan = await db
+    .select({ exerciseId: workoutPlanExercises.exerciseId })
+    .from(workoutPlanExercises)
+    .innerJoin(exercises, eq(workoutPlanExercises.exerciseId, exercises.id))
+    .where(and(eq(workoutPlanExercises.workoutPlanDayId, dayId), eq(exercises.equipment, "Bodyweight")))
+    .limit(1);
+  assert.ok(weightedPlan[0] && bodyweightPlan[0], "fixture needs one weighted and one bodyweight exercise");
+
+  const sessionId = await startSession(u.id, a.planId, 1);
+
+  const weightedSse = await db
+    .select()
+    .from(workoutSessionExercises)
+    .where(and(eq(workoutSessionExercises.workoutSessionId, sessionId), eq(workoutSessionExercises.exerciseId, weightedPlan[0].exerciseId)))
+    .limit(1);
+  const [weightedSet] = await db
+    .insert(workoutSets)
+    .values({ workoutSessionExerciseId: weightedSse[0].id, setNumber: 1, weightKg: 40, reps: 10, rpe: 6, setType: "working" })
+    .returning();
+
+  await assert.rejects(
+    () => updateSessionSet(u.id, sessionId, weightedSet.id, { weightKg: 0, reps: 10 }),
+    /Weight is required/,
+  );
+
+  const bodyweightSse = await db
+    .select()
+    .from(workoutSessionExercises)
+    .where(and(eq(workoutSessionExercises.workoutSessionId, sessionId), eq(workoutSessionExercises.exerciseId, bodyweightPlan[0].exerciseId)))
+    .limit(1);
+  const [bodyweightSet] = await db
+    .insert(workoutSets)
+    .values({ workoutSessionExerciseId: bodyweightSse[0].id, setNumber: 1, weightKg: 0, reps: 12, rpe: 6, setType: "working" })
+    .returning();
+
+  const editedBodyweight = await updateSessionSet(u.id, sessionId, bodyweightSet.id, { weightKg: 0, reps: 14, rpe: 7 });
+  assert.equal(editedBodyweight.weightKg, 0);
+  assert.equal(editedBodyweight.reps, 14);
 });
 
 test("activity correction allows edit/remove in progress and rejects mutation after completion", async () => {
