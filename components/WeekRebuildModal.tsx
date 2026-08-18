@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { WeekView } from "@/lib/week-view";
 import { CoachDecisionCard } from "./CoachDecisionCard";
+import { Loader } from "./Loader";
 
 export interface RebuildReasonOption {
   key: string;
@@ -69,10 +70,12 @@ export function WeekRebuildModal({
   const [freeText, setFreeText] = useState("");
   const [proposal, setProposal] = useState<StoredRebuild | null>(null);
   const [busy, setBusy] = useState(false);
+  const [coaching, setCoaching] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function submit() {
     setBusy(true);
+    setCoaching(true);
     setError(null);
     const res = await fetch("/api/week-rebuild", {
       method: "POST",
@@ -83,6 +86,7 @@ export function WeekRebuildModal({
       }),
     });
     const data = await res.json();
+    setCoaching(false);
     setBusy(false);
     if (data.error) {
       setError(data.error);
@@ -94,6 +98,7 @@ export function WeekRebuildModal({
 
   async function answer(questionId: string, answer: string) {
     setBusy(true);
+    setCoaching(true);
     setError(null);
     const res = await fetch(`/api/week-rebuild/${proposal!.id}/answer`, {
       method: "POST",
@@ -101,6 +106,7 @@ export function WeekRebuildModal({
       body: JSON.stringify({ questionId, answer }),
     });
     const data = await res.json();
+    setCoaching(false);
     setBusy(false);
     if (data.error) {
       setError(data.error);
@@ -305,6 +311,7 @@ export function WeekRebuildModal({
             >
               {busy ? "Thinking…" : "REVIEW MY WEEK"}
             </button>
+            {coaching && <Loader context="week-rebuild" />}
             <button type="button" onClick={() => setStep("reason")} className="w-full rounded-2xl py-3 text-base font-semibold text-zinc-500">
               BACK
             </button>
@@ -373,27 +380,31 @@ export function WeekRebuildModal({
               </div>
             )}
 
-            {proposal.proposal.questions.length > 0 && (
-              <div className="space-y-2">
-                {proposal.proposal.questions.map((question) => (
-                  <div key={question.id}>
-                    <p className="mb-2 text-sm text-zinc-300">{question.question}</p>
-                    <div className="space-y-2">
-                      {question.options.map((option) => (
-                        <button
-                          key={option}
-                          type="button"
-                          disabled={busy}
-                          onClick={() => answer(question.id, option)}
-                          className="w-full rounded-2xl bg-zinc-800 px-4 py-3 text-left text-zinc-100"
-                        >
-                          {option}
-                        </button>
-                      ))}
+            {coaching ? (
+              <Loader context="week-rebuild" />
+            ) : (
+              proposal.proposal.questions.length > 0 && (
+                <div className="space-y-2">
+                  {proposal.proposal.questions.map((question) => (
+                    <div key={question.id}>
+                      <p className="mb-2 text-sm text-zinc-300">{question.question}</p>
+                      <div className="space-y-2">
+                        {question.options.map((option) => (
+                          <button
+                            key={option}
+                            type="button"
+                            disabled={busy}
+                            onClick={() => answer(question.id, option)}
+                            className="w-full rounded-2xl bg-zinc-800 px-4 py-3 text-left text-zinc-100"
+                          >
+                            {option}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )
             )}
 
             {proposal.proposal.questions.length === 0 && (
@@ -404,7 +415,7 @@ export function WeekRebuildModal({
                   onClick={apply}
                   className="w-full rounded-2xl bg-emerald-500 py-4 text-lg font-bold text-zinc-950 transition active:scale-[0.98] disabled:opacity-60"
                 >
-                  {busy ? "Applying…" : "ACCEPT CHANGES"}
+                  {busy ? <Loader compact /> : "ACCEPT CHANGES"}
                 </button>
                 <button
                   type="button"

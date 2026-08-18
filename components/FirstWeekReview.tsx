@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { StoredWeeklyPlanProposal } from "@/lib/coach/service";
+import { Loader } from "./Loader";
 
 export function FirstWeekReview({ stored }: { stored: StoredWeeklyPlanProposal }) {
   const router = useRouter();
@@ -108,7 +109,7 @@ export function FirstWeekReview({ stored }: { stored: StoredWeeklyPlanProposal }
         disabled={busy}
         className="w-full rounded-2xl bg-emerald-500 py-4 text-lg font-bold text-zinc-950 transition active:scale-[0.98] disabled:opacity-60"
       >
-        {busy ? "Saving…" : "ACCEPT WEEK 1"}
+        {busy ? <Loader compact /> : "ACCEPT WEEK 1"}
       </button>
       <button
         type="button"

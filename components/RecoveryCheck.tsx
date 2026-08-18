@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { routes } from "@/lib/routes";
+import { Loader } from "./Loader";
 
 const METRICS = [
   { key: "sleep", label: "Sleep", low: "poor", high: "great" },
@@ -92,7 +93,7 @@ export function RecoveryCheck({ planDayId }: { planDayId: number | null }) {
         disabled={!allDone || busy}
         className="w-full rounded-2xl bg-emerald-500 py-4 text-lg font-bold text-zinc-950 transition active:scale-[0.98] disabled:opacity-60"
       >
-        CONTINUE
+        {busy ? <Loader compact /> : "CONTINUE"}
       </button>
       <button
         type="button"

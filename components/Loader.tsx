@@ -83,14 +83,20 @@ export function Loader({
     );
   }
 
+  if (compact) {
+    return (
+      <span role="status" className="inline-flex items-center justify-center">
+        <Spinner size="sm" />
+      </span>
+    );
+  }
+
   return (
     <div role="status" aria-live="polite" className="flex items-center justify-center gap-3 py-2">
-      <Spinner size={compact ? "sm" : "md"} />
-      {!compact && (
-        <p key={text} className="loader-message text-sm font-semibold text-zinc-300">
-          {text}
-        </p>
-      )}
+      <Spinner size="md" />
+      <p key={text} className="loader-message text-sm font-semibold text-zinc-300">
+        {text}
+      </p>
     </div>
   );
 }

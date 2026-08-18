@@ -16,6 +16,7 @@ import { routes } from "@/lib/routes";
 import { smallestIncrement } from "@/lib/progression";
 import { Stepper } from "@/components/Stepper";
 import { ExerciseMedia, type ExerciseMediaData } from "@/components/ExerciseMedia";
+import { Loader } from "@/components/Loader";
 
 interface LoggedSet {
   id: number;
@@ -661,14 +662,17 @@ export function ActiveWorkout({ data, nav }: { data: ActiveWorkoutData; nav?: Ac
       <header className="mb-5">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold">{title}</h1>
-          <button
-            type="button"
-            onClick={() => setMenuOpen(true)}
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-zinc-800 text-zinc-300"
-            aria-label="Workout menu"
-          >
-            •••
-          </button>
+          <div className="flex items-center gap-3">
+            {saving && <Loader compact />}
+            <button
+              type="button"
+              onClick={() => setMenuOpen(true)}
+              className="flex h-10 w-10 items-center justify-center rounded-full bg-zinc-800 text-zinc-300"
+              aria-label="Workout menu"
+            >
+              •••
+            </button>
+          </div>
         </div>
         <button
           type="button"

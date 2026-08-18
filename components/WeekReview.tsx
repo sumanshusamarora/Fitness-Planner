@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { formatWeight } from "@/lib/dates";
 import type { StoredWeeklyPlanProposal } from "@/lib/coach/service";
+import { Loader } from "./Loader";
 
 function labelFor(action: string) {
   if (action === "increase_load") return "↑ Increase";
@@ -111,7 +112,7 @@ export function WeekReview({ storedProposal }: { storedProposal: StoredWeeklyPla
 
       {error && <p className="rounded-xl bg-red-500/10 p-3 text-sm text-red-300">{error}</p>}
       <button type="button" onClick={acceptWeek} disabled={busy || needsInput} className="w-full rounded-2xl bg-emerald-500 py-4 text-lg font-bold text-zinc-950 transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50">
-        {busy ? "Saving…" : needsInput ? "INPUT REQUIRED" : `ACCEPT WEEK ${proposal.proposedWeekNumber}`}
+        {busy ? <Loader compact /> : needsInput ? "INPUT REQUIRED" : `ACCEPT WEEK ${proposal.proposedWeekNumber}`}
       </button>
     </div>
   );

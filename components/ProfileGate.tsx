@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { USERNAME_STORAGE_KEY } from "@/lib/username";
+import { Loader } from "./Loader";
 
 type Phase = "loading" | "username" | "not_found";
 
@@ -63,7 +64,7 @@ export function ProfileGate() {
   }
 
   if (phase === "loading") {
-    return <p className="py-16 text-center text-zinc-500">Loading…</p>;
+    return <Loader message="Loading…" />;
   }
 
   return (

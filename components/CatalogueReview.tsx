@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Loader } from "./Loader";
 
 interface ExerciseSummary {
   exercise: {
@@ -258,7 +259,7 @@ export function CatalogueReview({ initial }: { initial: InitialData }) {
                   )}
 
                   {loading === item.exercise.id && (
-                    <p className="text-sm text-zinc-500">Loading matches…</p>
+                    <Loader message="Loading matches…" />
                   )}
 
                   {!item.approvedMapping && suggestedCandidate && (

@@ -7,6 +7,7 @@ import { formatWeight } from "@/lib/dates";
 import { routes } from "@/lib/routes";
 import type { WeekDayView, WeekView } from "@/lib/week-view";
 import { CoachDecisionCard } from "./CoachDecisionCard";
+import { Loader } from "./Loader";
 import { WeekRebuildModal } from "./WeekRebuildModal";
 import type { RebuildFollowUp, RebuildReasonOption } from "./WeekRebuildModal";
 
@@ -92,6 +93,7 @@ export function WeekPlanner({
   const router = useRouter();
   const [sheet, setSheet] = useState<Sheet>(null);
   const [busy, setBusy] = useState(false);
+  const [coachingAdd, setCoachingAdd] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rebuildOpen, setRebuildOpen] = useState(false);
   const openedFocus = useRef(false);
@@ -128,6 +130,7 @@ export function WeekPlanner({
 
   async function proposeAdd(day: WeekDayView, effort: Effort) {
     setBusy(true);
+    setCoachingAdd(true);
     setError(null);
     const res = await fetch("/api/plan-adjustments", {
       method: "POST",
@@ -135,6 +138,7 @@ export function WeekPlanner({
       body: JSON.stringify({ action: "add", planId: week.planId, dayId: day.planDayId, effort }),
     });
     const data = await res.json();
+    setCoachingAdd(false);
     setBusy(false);
     if (data.error) {
       setError(data.error);
@@ -324,6 +328,7 @@ export function WeekPlanner({
               sheet={sheet}
               week={week}
               busy={busy}
+              coachingAdd={coachingAdd}
               onClose={() => setSheet(null)}
               onMove={proposeMove}
               onAdd={proposeAdd}
@@ -361,6 +366,7 @@ function SheetBody(props: {
   sheet: NonNullable<Sheet>;
   week: WeekView;
   busy: boolean;
+  coachingAdd: boolean;
   onClose: () => void;
   onMove: (source: WeekDayView, target: WeekDayView) => void;
   onAdd: (day: WeekDayView, effort: Effort) => void;
@@ -561,22 +567,26 @@ function SheetBody(props: {
       <div>
         <SheetTitle>How hard should today be?</SheetTitle>
         <p className="mb-4 text-sm text-zinc-400">Light is the safe default.</p>
-        <div className="space-y-2">
-          {EFFORTS.map((e, i) => (
-            <button
-              key={e.key}
-              type="button"
-              disabled={props.busy}
-              onClick={() => props.onAdd(sheet.day, e.key)}
-              className={`w-full rounded-2xl px-4 py-4 text-left transition active:scale-[0.99] ${
-                i === 0 ? "bg-emerald-500 text-zinc-950" : "bg-zinc-800 text-zinc-100"
-              }`}
-            >
-              <span className="text-lg font-bold">{e.label}</span>
-              <span className={`ml-2 text-sm ${i === 0 ? "text-zinc-800" : "text-zinc-400"}`}>{e.hint}</span>
-            </button>
-          ))}
-        </div>
+        {props.coachingAdd ? (
+          <Loader context="extra-session" />
+        ) : (
+          <div className="space-y-2">
+            {EFFORTS.map((e, i) => (
+              <button
+                key={e.key}
+                type="button"
+                disabled={props.busy}
+                onClick={() => props.onAdd(sheet.day, e.key)}
+                className={`w-full rounded-2xl px-4 py-4 text-left transition active:scale-[0.99] ${
+                  i === 0 ? "bg-emerald-500 text-zinc-950" : "bg-zinc-800 text-zinc-100"
+                }`}
+              >
+                <span className="text-lg font-bold">{e.label}</span>
+                <span className={`ml-2 text-sm ${i === 0 ? "text-zinc-800" : "text-zinc-400"}`}>{e.hint}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <CloseRow onClose={props.onClose} />
       </div>
     );
@@ -599,7 +609,7 @@ function SheetBody(props: {
           onClick={() => props.onApply(sheet.adjustment.id)}
           className="w-full rounded-2xl bg-emerald-500 py-4 text-lg font-bold text-zinc-950 transition active:scale-[0.98] disabled:opacity-60"
         >
-          {props.busy ? "Saving…" : isSwap ? "SWAP DAYS" : "CONFIRM MOVE"}
+          {props.busy ? <Loader compact /> : isSwap ? "SWAP DAYS" : "CONFIRM MOVE"}
         </button>
         <CloseRow onClose={props.onClose} />
       </div>
@@ -644,7 +654,7 @@ function SheetBody(props: {
         onClick={() => props.onApply(sheet.adjustment.id)}
         className="w-full rounded-2xl bg-emerald-500 py-4 text-lg font-bold text-zinc-950 transition active:scale-[0.98] disabled:opacity-60"
       >
-        {props.busy ? "Adding…" : "ADD WORKOUT"}
+        {props.busy ? <Loader compact /> : "ADD WORKOUT"}
       </button>
       <CloseRow onClose={props.onClose} />
     </div>
