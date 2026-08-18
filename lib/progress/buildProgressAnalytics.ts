@@ -3,14 +3,12 @@ import { db } from "@/db";
 import {
   exercises,
   recoveryLogs,
-  workoutPlanDays,
-  workoutPlanExercises,
-  workoutPlans,
   workoutSessionExercises,
   workoutSessions,
   workoutSets,
 } from "@/db/schema";
 import { addDaysToISODate, toISODate } from "@/lib/dates";
+import { buildWeeklyActualSummary } from "@/lib/training-summary";
 import { getTrainingProfile } from "@/lib/training-profile";
 import { classifyTrainingStage, summarizeAdaptation } from "./adaptation";
 import { analyzeExercise } from "./exerciseProgress";
@@ -80,6 +78,8 @@ export function assembleProgressAnalytics(input: ProgressAnalyticsInput): Progre
     sessions: input.sessions,
     sets: flatSets(input.exposures),
     recovery: input.recovery,
+    adherenceSummary: input.adherenceSummary,
+    extraSessions: input.extraSessions,
   });
 
   const plateau = assessPlateau({
@@ -188,6 +188,12 @@ export async function buildProgressAnalytics(input: {
       .orderBy(asc(recoveryLogs.logDate)),
   ]);
 
+  const canonical = await buildWeeklyActualSummary({
+    userId: input.userId,
+    anchorDateISO,
+    windowStartISO: toleranceStartISO,
+  });
+
   const sessionIds = sessionRows.map((row) => row.sessionId);
   const sessionExerciseRows = sessionIds.length
     ? await db
@@ -237,8 +243,6 @@ export async function buildProgressAnalytics(input: {
         .from(exercises)
         .where(inArray(exercises.id, exerciseIds))
     : [];
-
-  const plannedSessions = await countPlannedSessions(input.userId, toleranceStartISO, anchorDateISO);
 
   const completedAtBySession = new Map<number, string>(
     sessionRows.map((row) => [row.sessionId, toISODate(row.completedAt ?? row.startedAt)]),
@@ -303,36 +307,8 @@ export async function buildProgressAnalytics(input: {
       jointPain: row.jointPain,
       stress: row.stress,
     })),
-    plannedSessions,
+    plannedSessions: canonical.adherence.prescribedSessions,
+    adherenceSummary: canonical.adherence,
+    extraSessions: canonical.planVsActual.extraSessions,
   });
-}
-
-async function countPlannedSessions(userId: number, fromISO: string, toISO: string): Promise<number | null> {
-  const planRows = await db
-    .select({ id: workoutPlans.id, startsOn: workoutPlans.startsOn })
-    .from(workoutPlans)
-    .where(eq(workoutPlans.userId, userId));
-  if (planRows.length === 0) return null;
-
-  const planIds = planRows.map((row) => row.id);
-  // Only days that actually carry exercises count as planned training sessions.
-  const dayRows = await db
-    .select({
-      workoutPlanId: workoutPlanDays.workoutPlanId,
-      dayNumber: workoutPlanDays.dayNumber,
-    })
-    .from(workoutPlanDays)
-    .innerJoin(workoutPlanExercises, eq(workoutPlanDays.id, workoutPlanExercises.workoutPlanDayId))
-    .where(inArray(workoutPlanDays.workoutPlanId, planIds))
-    .groupBy(workoutPlanDays.id);
-
-  const planStarts = new Map(planRows.map((row) => [row.id, row.startsOn]));
-  let count = 0;
-  for (const day of dayRows) {
-    const startsOn = planStarts.get(day.workoutPlanId);
-    if (!startsOn) continue;
-    const dateISO = addDaysToISODate(startsOn, day.dayNumber - 1);
-    if (dateISO >= fromISO && dateISO <= toISO) count += 1;
-  }
-  return count;
 }

@@ -5,6 +5,7 @@ import type {
   TrainingTolerance,
   TrendDirection,
 } from "./types";
+import type { AdherenceSummary } from "@/lib/training-summary";
 
 /**
  * Training tolerance: "how much productive training can this user currently
@@ -73,6 +74,8 @@ export interface ToleranceInput {
   /** Set RPEs by session, to derive per-session effort and completed sets. */
   sets: { sessionId: number; rpe: number | null }[];
   recovery: RecoveryRecord[];
+  adherenceSummary?: AdherenceSummary;
+  extraSessions?: number;
 }
 
 export function analyzeTolerance(input: ToleranceInput): TrainingTolerance {
@@ -81,7 +84,19 @@ export function analyzeTolerance(input: ToleranceInput): TrainingTolerance {
   const endedEarly = finished.filter((session) => session.status === "ended_early");
   const skipped = finished.filter((session) => session.status === "skipped");
 
-  const adherenceRate = finished.length > 0 ? completed.length / finished.length : null;
+  const adherence = input.adherenceSummary;
+  const completedPrescribedSessions = adherence?.completedPrescribedSessions ?? completed.length;
+  const endedEarlyPrescribedSessions = adherence?.endedEarlyPrescribedSessions ?? endedEarly.length;
+  const skippedPrescribedSessions = adherence?.skippedPrescribedSessions ?? skipped.length;
+  const inProgressPrescribedSessions = adherence?.inProgressPrescribedSessions ?? 0;
+  const knownOpportunitySessions =
+    adherence?.knownOpportunityPrescribedSessions ??
+    (completed.length + endedEarly.length + skipped.length);
+  const futurePrescribedSessions = adherence?.futurePrescribedSessions ?? 0;
+  const pastDuePrescribedSessions = adherence?.pastDuePrescribedSessions ?? 0;
+  const prescribedSessions = adherence?.prescribedSessions ?? input.plannedSessions;
+  const adherenceRate = adherence?.adherenceRate ?? (finished.length > 0 ? completed.length / finished.length : null);
+  const extraSessions = input.extraSessions ?? 0;
 
   const setsBySession = new Map<number, number>();
   const rpesBySession = new Map<number, number[]>();
@@ -126,10 +141,23 @@ export function analyzeTolerance(input: ToleranceInput): TrainingTolerance {
   const meaningfulJointPain = painFlags;
 
   const evidence: string[] = [];
-  if (input.plannedSessions != null) {
-    evidence.push(`${completed.length}/${input.plannedSessions} planned sessions completed.`);
+  if (prescribedSessions != null) {
+    evidence.push(`${completedPrescribedSessions}/${prescribedSessions} prescribed sessions completed.`);
   }
-  if (adherenceRate != null) evidence.push(`Adherence ${Math.round(adherenceRate * 100)}% of started sessions completed.`);
+  if (adherenceRate != null) {
+    evidence.push(
+      `Adherence ${Math.round(adherenceRate * 100)}% (${completedPrescribedSessions}/${knownOpportunitySessions}) of prescribed known opportunities.`,
+    );
+  }
+  if (futurePrescribedSessions > 0) {
+    evidence.push(`${futurePrescribedSessions} prescribed session(s) are still future opportunities.`);
+  }
+  if (pastDuePrescribedSessions > 0) {
+    evidence.push(`${pastDuePrescribedSessions} prescribed session(s) are past due without a terminal outcome.`);
+  }
+  if (extraSessions > 0) {
+    evidence.push(`${extraSessions} extra session(s) recorded separately from prescribed adherence.`);
+  }
   evidence.push(`${completedSets} sets completed across the analysed window.`);
   if (scheduleRelatedEndedEarly > 0) evidence.push(`${scheduleRelatedEndedEarly} session(s) cut short or skipped for scheduling reasons (not a tolerance signal).`);
   if (fatigueRelatedEndedEarly > 0) evidence.push(`${fatigueRelatedEndedEarly} session(s) cut short for recovery/fatigue reasons.`);
@@ -158,10 +186,15 @@ export function analyzeTolerance(input: ToleranceInput): TrainingTolerance {
   return {
     trend,
     adherenceRate: adherenceRate == null ? null : round1(adherenceRate),
-    completedSessions: completed.length,
-    plannedSessions: input.plannedSessions,
-    endedEarlySessions: endedEarly.length,
-    skippedSessions: skipped.length,
+    completedSessions: completedPrescribedSessions,
+    plannedSessions: prescribedSessions,
+    endedEarlySessions: endedEarlyPrescribedSessions,
+    skippedSessions: skippedPrescribedSessions,
+    inProgressSessions: inProgressPrescribedSessions,
+    futurePrescribedSessions,
+    pastDuePrescribedSessions,
+    knownOpportunitySessions,
+    extraSessions,
     completedSets,
     completedSetsTrend,
     averageRpeTrend,

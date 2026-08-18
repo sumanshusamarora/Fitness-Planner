@@ -29,6 +29,8 @@ import {
 } from "@/lib/workouts";
 import { buildProgressAnalytics } from "@/lib/progress";
 import { isMeasurementType } from "@/lib/exercise-measurement";
+import { addDaysToISODate } from "@/lib/dates";
+import { buildWeeklyActualSummary } from "@/lib/training-summary";
 import {
   buildRecentActualSummary,
   logSessionSet,
@@ -325,4 +327,41 @@ test("a snapshot exists once and is immutable after a plan edit", async () => {
   const second = await getSessionPlanSnapshot(session.id);
   assert.ok(second);
   assert.equal(second.title, first.title, "snapshot does not track plan mutations");
+});
+
+test("canonical weekly summary compares against session snapshot, not mutated live plan", async () => {
+  const { user, day, planId } = await newUser("M");
+  const session = await createSession(user.id, day.id);
+  const snapBefore = await getSessionPlanSnapshot(session.id);
+  assert.ok(snapBefore);
+  const expectedFromSnapshot = snapBefore.exercises.reduce((sum, ex) => sum + ex.targetSets, 0);
+
+  const firstExercise = (await dayExerciseIds(day.id))[0];
+  await db
+    .update(workoutPlanExercises)
+    .set({ targetSets: firstExercise.targetSets + 4 })
+    .where(eq(workoutPlanExercises.id, firstExercise.id));
+
+  await logSessionSet(user.id, session.id, {
+    exerciseId: firstExercise.exerciseId,
+    weightKg: 40,
+    reps: 10,
+    rpe: 6,
+    setType: "working",
+  });
+  await finishSession(user.id, session.id, {});
+
+  const plan = (
+    await db.select().from(workoutPlans).where(eq(workoutPlans.id, planId)).limit(1)
+  )[0];
+  const summary = await buildWeeklyActualSummary({
+    userId: user.id,
+    windowStartISO: plan.startsOn,
+    windowEndISO: addDaysToISODate(plan.startsOn, 6),
+    anchorDateISO: addDaysToISODate(plan.startsOn, 6),
+  });
+
+  const sessionFact = summary.planVsActual.sessions.find((item) => item.sessionId === session.id);
+  assert.ok(sessionFact);
+  assert.equal(sessionFact.plannedWorkingSets, expectedFromSnapshot);
 });

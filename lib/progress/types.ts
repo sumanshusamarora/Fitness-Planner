@@ -112,6 +112,19 @@ export interface ProgressAnalyticsInput {
   sessions: SessionRecord[];
   recovery: RecoveryRecord[];
   plannedSessions: number | null;
+  adherenceSummary?: {
+    prescribedSessions: number;
+    completedPrescribedSessions: number;
+    endedEarlyPrescribedSessions: number;
+    skippedPrescribedSessions: number;
+    inProgressPrescribedSessions: number;
+    futurePrescribedSessions: number;
+    pastDuePrescribedSessions: number;
+    knownOpportunityPrescribedSessions: number;
+    adherenceRate: number | null;
+    adherencePercent: number | null;
+  };
+  extraSessions?: number;
 }
 
 export interface ExerciseProgress {
@@ -161,11 +174,18 @@ export interface PerformanceSummary {
 
 export interface TrainingTolerance {
   trend: ToleranceTrend;
+  /** Completed prescribed sessions / prescribed known opportunities. */
   adherenceRate: number | null;
+  /** Completed prescribed sessions in the analysed window. */
   completedSessions: number;
   plannedSessions: number | null;
   endedEarlySessions: number;
   skippedSessions: number;
+  inProgressSessions: number;
+  futurePrescribedSessions: number;
+  pastDuePrescribedSessions: number;
+  knownOpportunitySessions: number;
+  extraSessions: number;
   completedSets: number;
   completedSetsTrend: TrendDirection;
   averageRpeTrend: TrendDirection;

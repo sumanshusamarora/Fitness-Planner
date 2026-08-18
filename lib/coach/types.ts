@@ -1,5 +1,6 @@
 import type { RecoverySnapshot } from "@/lib/progression";
 import type { ProgressAnalytics } from "@/lib/progress";
+import type { WeeklyActualSummary } from "@/lib/training-summary";
 import type { CoachRunMetadata } from "./ai/types";
 
 export type CoachConfidence = "high" | "medium" | "needs-input";
@@ -86,6 +87,8 @@ export interface TrainingContext {
   recovery: RecoverySummary;
   /** Longitudinal progress analytics (deterministic). Present once any history exists. */
   progress?: ProgressAnalytics;
+  /** Canonical prescribed-vs-actual facts for the source week. */
+  training?: WeeklyActualSummary;
 }
 
 export interface ExerciseAnalysis {

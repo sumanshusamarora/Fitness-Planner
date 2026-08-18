@@ -177,6 +177,7 @@ export class OpenAICoachReasoner implements CoachReasoner {
           missedDays: context.missedDays,
           sessionOutcomes: context.sessionOutcomes,
         },
+        training: context.training,
         recovery: {
           entries: context.recovery.entries,
           latest: context.recovery.latest,
@@ -277,6 +278,7 @@ export class OpenAICoachReasoner implements CoachReasoner {
         adjacentMuscles: base.adjacentMuscles,
         candidateExercises: base.candidates,
         progress: rolling.progress,
+        training: rolling.training,
         past: {
           sessionsCompleted: rolling.past.sessionsCompleted,
           sessionsEndedEarly: rolling.past.sessionsEndedEarly,
@@ -322,6 +324,7 @@ export class OpenAICoachReasoner implements CoachReasoner {
           muscleSets: rolling.past.muscleSets,
         },
         future: rolling.future,
+        training: rolling.training,
       },
     });
     if (!isSuccess(result)) throwForFailure(result);
@@ -395,6 +398,7 @@ export class OpenAICoachReasoner implements CoachReasoner {
           rpeTrend: rolling.past.rpeTrend,
           muscleSets: rolling.past.muscleSets,
         },
+        training: rolling.training,
       },
     });
     if (!isSuccess(result)) throwForFailure(result);
@@ -485,6 +489,7 @@ function buildRebuildAIContext(context: WeekRebuildContext) {
         exercises: day.exercises,
       })),
     },
+    training: context.training,
     future: context.future,
     constraints: context.constraints,
   };

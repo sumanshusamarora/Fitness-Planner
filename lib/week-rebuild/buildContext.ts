@@ -11,6 +11,7 @@ import { addDaysToISODate, toISODate } from "@/lib/dates";
 import { getLatestRecoverySnapshot } from "@/lib/recovery";
 import { buildProgressAnalytics } from "@/lib/progress";
 import { buildRecentActualSummary } from "@/lib/session-activities";
+import { buildWeeklyActualSummary } from "@/lib/training-summary";
 import { hasMeaningfulJointPain, hasPoorRecovery } from "@/lib/progression";
 import { getTrainingProfile } from "@/lib/training-profile";
 import { computeRebuildConstraints } from "./constraints";
@@ -39,22 +40,31 @@ export async function buildWeekRebuildContext(input: {
   const anchorDate = input.anchorDate ?? new Date();
   const anchorDateISO = toISODate(anchorDate);
 
-  const [plan, profile, progress, actual] = await Promise.all([
-    db
+  const plan = (
+    await db
       .select()
       .from(workoutPlans)
       .where(and(eq(workoutPlans.id, input.workoutPlanId), eq(workoutPlans.userId, input.userId)))
-      .limit(1),
+      .limit(1)
+  )[0];
+  if (!plan) throw new Error("Plan not found.");
+
+  const [profile, progress, actual, training] = await Promise.all([
     getTrainingProfile(input.userId),
     buildProgressAnalytics({ userId: input.userId, anchorDate }),
     buildRecentActualSummary(input.userId),
+    buildWeeklyActualSummary({
+      userId: input.userId,
+      anchorDateISO,
+      windowStartISO: plan.startsOn,
+      windowEndISO: addDaysToISODate(plan.startsOn, 6),
+    }),
   ]);
-  if (!plan[0]) throw new Error("Plan not found.");
 
   const dayRows = await db
     .select()
     .from(workoutPlanDays)
-    .where(eq(workoutPlanDays.workoutPlanId, plan[0].id))
+    .where(eq(workoutPlanDays.workoutPlanId, plan.id))
     .orderBy(asc(workoutPlanDays.dayNumber));
 
   const dayIds = dayRows.map((day) => day.id);
@@ -92,7 +102,7 @@ export async function buildWeekRebuildContext(input: {
       .where(
         and(
           eq(workoutPlans.userId, input.userId),
-          eq(workoutPlans.weekNumber, plan[0].weekNumber + 1),
+          eq(workoutPlans.weekNumber, plan.weekNumber + 1),
         ),
       )
       .limit(1),
@@ -124,7 +134,7 @@ export async function buildWeekRebuildContext(input: {
   }
 
   const days: RebuildDayContext[] = dayRows.map((day) => {
-    const dateISO = addDaysToISODate(plan[0].startsOn, day.dayNumber - 1);
+    const dateISO = addDaysToISODate(plan.startsOn, day.dayNumber - 1);
     const sessions = sessionsByDay.get(day.id) ?? [];
     const latest = sessions[sessions.length - 1];
     const sessionStatus: RebuildDayContext["sessionStatus"] = latest
@@ -168,9 +178,9 @@ export async function buildWeekRebuildContext(input: {
 
   const recentMuscles = [...new Set(exerciseRows.map((row) => row.primaryMuscle))];
 
-  const completedSessions = days.filter((day) => day.sessionStatus === "completed").length;
-  const prescribedSessions = days.filter((day) => day.isWorkout && day.origin !== "extra").length;
-  const extraSessions = days.filter((day) => day.isWorkout && day.origin === "extra").length;
+  const completedSessions = training.adherence.completedPrescribedSessions;
+  const prescribedSessions = training.adherence.prescribedSessions;
+  const extraSessions = training.planVsActual.extraSessions;
   const plannedSessions = prescribedSessions;
 
   const constraints = computeRebuildConstraints(days, input.feedback, {
@@ -201,9 +211,9 @@ export async function buildWeekRebuildContext(input: {
       limitationsNotes: profile?.limitationsNotes ?? null,
     },
     currentWeek: {
-      planId: plan[0].id,
-      weekNumber: plan[0].weekNumber,
-      startsOn: plan[0].startsOn,
+      planId: plan.id,
+      weekNumber: plan.weekNumber,
+      startsOn: plan.startsOn,
       plannedSessions,
       prescribedSessions,
       extraSessions,
@@ -218,6 +228,7 @@ export async function buildWeekRebuildContext(input: {
       trend: recoveryTrend,
     },
     progress,
+    training,
     actual,
     future: {
       nextWeekKnown: nextPlan.length > 0,

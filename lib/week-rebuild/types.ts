@@ -1,6 +1,7 @@
 import type { ProgressAnalytics } from "@/lib/progress";
 import type { RecoverySnapshot } from "@/lib/progression";
 import type { RecentActualSummary } from "@/lib/session-activities";
+import type { WeeklyActualSummary } from "@/lib/training-summary";
 import type { CoachRunMetadata } from "@/lib/coach/ai/types";
 
 /**
@@ -202,6 +203,8 @@ export interface WeekRebuildContext {
   feedback: WeekFeedbackInput;
   recovery: RebuildRecoverySummary;
   progress: ProgressAnalytics;
+  /** Canonical prescribed-vs-actual facts for the current week window. */
+  training?: WeeklyActualSummary;
   /** Compact recent "what actually happened" facts (added sets, cardio, replacements). */
   actual: RecentActualSummary;
   future: {

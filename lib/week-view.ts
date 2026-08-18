@@ -50,9 +50,12 @@ export interface WeekView {
   planName: string;
   days: WeekDayView[];
   completedCount: number;
+  completedPrescribedCount: number;
   endedEarlyCount: number;
   skippedCount: number;
   workoutCount: number;
+  prescribedWorkoutCount: number;
+  extraWorkoutCount: number;
   weekComplete: boolean;
   nextWeekExists: boolean;
 }
@@ -228,7 +231,16 @@ export async function getWeekView(
   });
 
   const workoutCount = viewDays.filter((d) => d.exerciseCount > 0).length;
+  const prescribedWorkoutCount = viewDays.filter(
+    (d) => d.exerciseCount > 0 && d.origin !== "extra",
+  ).length;
+  const extraWorkoutCount = viewDays.filter(
+    (d) => d.exerciseCount > 0 && d.origin === "extra",
+  ).length;
   const completedCount = viewDays.filter((d) => d.status === "completed").length;
+  const completedPrescribedCount = viewDays.filter(
+    (d) => d.status === "completed" && d.origin !== "extra",
+  ).length;
   const endedEarlyCount = viewDays.filter((d) => d.status === "ended_early").length;
   const skippedCount = viewDays.filter((d) => d.status === "skipped").length;
 
@@ -250,9 +262,12 @@ export async function getWeekView(
     planName: plan.name,
     days: viewDays,
     completedCount,
+    completedPrescribedCount,
     endedEarlyCount,
     skippedCount,
     workoutCount,
+    prescribedWorkoutCount,
+    extraWorkoutCount,
     weekComplete: workoutCount > 0 && completedCount >= workoutCount,
     nextWeekExists: nextPlan.length > 0,
   };

@@ -23,6 +23,7 @@ import { getTrainingProfile } from "@/lib/training-profile";
 import type { RecoverySnapshot } from "@/lib/progression";
 import { buildProgressAnalytics, type ProgressAnalytics } from "@/lib/progress";
 import { buildRecentActualSummary, type RecentActualSummary } from "@/lib/session-activities";
+import { buildWeeklyActualSummary, type WeeklyActualSummary } from "@/lib/training-summary";
 import { parseWeeklyPlanProposal } from "../schemas";
 
 /**
@@ -128,6 +129,8 @@ export interface RollingCoachContext {
   future: FutureWindowSummary;
   /** Longitudinal progress analytics (deterministic), added for the coach. */
   progress: ProgressAnalytics;
+  /** Canonical prescribed-vs-actual facts used across coach modes. */
+  training: WeeklyActualSummary;
   /** Compact "what actually happened" facts (warm-up/cardio/mobility/added sets/replacements). */
   actual: RecentActualSummary;
 }
@@ -376,7 +379,7 @@ export async function buildRollingCoachContext(input: {
   const windowStartISO = addDaysToISODate(anchorDateISO, -pastDays);
   const futureEndISO = addDaysToISODate(anchorDateISO, futureDays);
 
-  const [user, profile, plans, proposalRows, sessionRows, setRows, recoveryRows] = await Promise.all([
+  const [user, profile, plans, proposalRows, sessionRows, setRows, recoveryRows, training] = await Promise.all([
     db.select().from(users).where(eq(users.id, input.userId)).limit(1),
     getTrainingProfile(input.userId),
     db.select().from(workoutPlans).where(eq(workoutPlans.userId, input.userId)).orderBy(asc(workoutPlans.startsOn)),
@@ -458,6 +461,12 @@ export async function buildRollingCoachContext(input: {
         ),
       )
       .orderBy(asc(recoveryLogs.logDate)),
+    buildWeeklyActualSummary({
+      userId: input.userId,
+      anchorDateISO,
+      windowStartISO: addDaysToISODate(anchorDateISO, -6),
+      windowEndISO: addDaysToISODate(anchorDateISO, 6),
+    }),
   ]);
 
   const planById = new Map(plans.map((plan) => [plan.id, plan]));
@@ -583,10 +592,6 @@ export async function buildRollingCoachContext(input: {
     adjacentMuscles: [...adjacentMuscles],
   };
 
-  const plannedWorkoutDaysInWindow = [...planDayByDate.values()].filter(
-    (info) => (exerciseCountByDay.get(info.dayId) ?? 0) > 0,
-  ).length;
-
   const sessions: RollingWorkoutEntry[] = sessionRows.map((row) => ({
     dateISO: toISODate(row.completedAt ?? row.startedAt),
     dayName: dayNameFor(row.dayNumber),
@@ -624,7 +629,7 @@ export async function buildRollingCoachContext(input: {
       jointPain: row.jointPain,
       stress: row.stress,
     })),
-    plannedSessions: plannedWorkoutDaysInWindow,
+    plannedSessions: training.adherence.knownOpportunityPrescribedSessions,
   });
 
   return {
@@ -645,6 +650,7 @@ export async function buildRollingCoachContext(input: {
     past,
     future,
     progress: await buildProgressAnalytics({ userId: input.userId, anchorDate }),
+    training,
     actual: await buildRecentActualSummary(input.userId),
   };
 }

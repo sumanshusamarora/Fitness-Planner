@@ -12,6 +12,8 @@ import {
   workoutSets,
 } from "@/db/schema";
 import { buildProgressAnalytics } from "@/lib/progress";
+import { addDaysToISODate } from "@/lib/dates";
+import { buildWeeklyActualSummary } from "@/lib/training-summary";
 import { summariseRecovery } from "./recovery";
 import type {
   CompletedSet,
@@ -38,6 +40,12 @@ export async function buildTrainingContext(
       .limit(1),
   ]);
   if (!user[0] || !plan[0]) return null;
+
+  const sourceWeekTraining = await buildWeeklyActualSummary({
+    userId,
+    windowStartISO: plan[0].startsOn,
+    anchorDateISO: addDaysToISODate(plan[0].startsOn, 6),
+  });
 
   const plannedRows = await db
     .select({
@@ -189,11 +197,12 @@ export async function buildTrainingContext(
     user: user[0],
     sourcePlan: plan[0],
     exercises: contextExercises,
-    plannedSessions: plannedDayIds.size,
-    completedSessions: completedDayIds.size,
+    plannedSessions: sourceWeekTraining.adherence.prescribedSessions,
+    completedSessions: sourceWeekTraining.adherence.completedPrescribedSessions,
     missedDays,
     sessionOutcomes,
     recovery: summariseRecovery(recoveryRows),
     progress: await buildProgressAnalytics({ userId }),
+    training: sourceWeekTraining,
   };
 }

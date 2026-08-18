@@ -54,7 +54,8 @@ export function HomeScreen({
         <div className="mt-1 flex items-baseline justify-between">
           <h1 className="text-3xl font-bold">Week {week.weekNumber}</h1>
           <p className="text-sm text-zinc-400">
-            {week.completedCount} / {week.workoutCount} done
+            Adherence: {week.completedPrescribedCount} of {week.prescribedWorkoutCount} prescribed sessions
+            {week.extraWorkoutCount > 0 && ` · Extra sessions: ${week.extraWorkoutCount}`}
             {week.endedEarlyCount > 0 && ` · ${week.endedEarlyCount} ended early`}
           </p>
         </div>

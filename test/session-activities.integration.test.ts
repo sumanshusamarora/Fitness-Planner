@@ -19,7 +19,7 @@ import {
   workoutSets,
 } from "@/db/schema";
 import { createInitialWeek } from "@/lib/initial-week";
-import { createSession, finishSession } from "@/lib/workouts";
+import { createSession, endSessionEarly, finishSession } from "@/lib/workouts";
 import { buildProgressAnalytics } from "@/lib/progress";
 import {
   addSessionActivity,
@@ -394,6 +394,35 @@ test("recent actual summary exposes compact cardio/extra/replacement facts", asy
   assert.ok(summary.warmupMinutes >= 15);
   assert.equal(summary.replacementWorkingSets, 1);
   assert.ok(summary.replacements.some((r) => r.reason === "equipment_busy"));
+});
+
+test("recent actual summary includes ended-early sessions as actual workload", async () => {
+  const stamp = Date.now();
+  const [u] = await db.insert(users).values({ name: `Act K ${stamp}`, username: `act-k-${stamp}`, usernameNormalized: `act-k-${stamp}` }).returning();
+  a.userId = u.id;
+  a.planId = (await createInitialWeek(u.id))!;
+
+  const day = await db.select().from(workoutPlanDays).where(and(eq(workoutPlanDays.workoutPlanId, a.planId), eq(workoutPlanDays.dayNumber, 1))).limit(1);
+  const ex = await db.select().from(workoutPlanExercises).where(eq(workoutPlanExercises.workoutPlanDayId, day[0].id)).limit(1);
+  const sessionId = await startSession(u.id, a.planId, 1);
+
+  await addSessionActivity(u.id, sessionId, {
+    activityType: "cardio",
+    activityRole: "cardio",
+    exerciseId: null,
+    nameSnapshot: "Bike",
+    durationSeconds: 600,
+    distanceMeters: null,
+    speed: null,
+    inclinePercent: null,
+    effortRpe: 5,
+    notes: null,
+  });
+  await logSet(u.id, sessionId, ex[0].exerciseId, 40, 10, "working");
+  await endSessionEarly(u.id, sessionId, { reason: "work" });
+
+  const summary = await buildRecentActualSummary(u.id);
+  assert.ok(summary.cardioMinutes >= 10);
 });
 
 test("user isolation: B cannot touch A's activities or session", async () => {  const stamp = Date.now();

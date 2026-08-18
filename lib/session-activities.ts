@@ -792,7 +792,7 @@ export async function buildRecentActualSummary(
     .where(
       and(
         eq(workoutSessions.userId, userId),
-        eq(workoutSessions.status, "completed"),
+        inArray(workoutSessions.status, ["completed", "ended_early"]),
         gte(workoutSessions.completedAt, since),
       ),
     );
