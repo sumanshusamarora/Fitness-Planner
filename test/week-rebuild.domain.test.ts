@@ -130,7 +130,9 @@ function context(overrides: Partial<WeekRebuildContext> = {}): WeekRebuildContex
       planId: 10,
       weekNumber: 4,
       startsOn: "2026-08-17",
-      plannedSessions: days.filter((d) => d.isWorkout).length,
+      plannedSessions: days.filter((d) => d.isWorkout && d.origin !== "extra").length,
+      prescribedSessions: days.filter((d) => d.isWorkout && d.origin !== "extra").length,
+      extraSessions: days.filter((d) => d.isWorkout && d.origin === "extra").length,
       completedSessions: days.filter((d) => d.sessionStatus === "completed").length,
       days,
     },
@@ -300,6 +302,42 @@ test("validation rejects proposals that modify completed history", () => {
   assert.throws(() => validateWeekRebuildProposal(proposal, ctx), /immutable day/);
 });
 
+test("desired total training days targets the absolute prescribed count", () => {
+  const baseDays = [
+    day({ dayId: 1, dayNumber: 1, dateISO: "2026-08-17", isWorkout: true }),
+    day({ dayId: 2, dayNumber: 2, dateISO: "2026-08-18", isWorkout: false, exercises: [], title: "Rest" }),
+    day({ dayId: 4, dayNumber: 4, dateISO: "2026-08-20", isWorkout: false, exercises: [], title: "Rest" }),
+    day({ dayId: 6, dayNumber: 6, dateISO: "2026-08-22", isWorkout: false, exercises: [], title: "Rest" }),
+  ];
+
+  const ctx = context({
+    feedback: feedback("too_few_days", { desired_total_days: 4, added_day_effort: "normal" }),
+    currentWeek: { days: baseDays } as WeekRebuildContext["currentWeek"],
+  });
+
+  const proposal = proposeWeekRebuildDeterministic(ctx);
+  const workouts = proposal.proposedDays.filter((d) => d.status === "workout");
+  assert.equal(workouts.length, 4);
+});
+
+test("existing extras do not inflate prescribed-day target", () => {
+  const days = [
+    day({ dayId: 1, dayNumber: 1, dateISO: "2026-08-17", isWorkout: true, origin: "extra" }),
+    day({ dayId: 2, dayNumber: 2, dateISO: "2026-08-18", isWorkout: true, title: "Full Body B" }),
+    day({ dayId: 4, dayNumber: 4, dateISO: "2026-08-20", isWorkout: false, exercises: [], title: "Rest" }),
+    day({ dayId: 6, dayNumber: 6, dateISO: "2026-08-22", isWorkout: false, exercises: [], title: "Rest" }),
+  ];
+
+  const proposal = proposeWeekRebuildDeterministic(
+    context({
+      feedback: feedback("too_few_days", { desired_total_days: 2, added_day_effort: "light" }),
+      currentWeek: { days } as WeekRebuildContext["currentWeek"],
+    }),
+  );
+
+  assert.equal(proposal.proposedDays.filter((d) => d.status === "workout").length, 2);
+});
+
 test("week rebuild accepts added day effort preferences coach_decide/light/normal", () => {
   const baseDays = [
     day({ dayId: 1, dayNumber: 1, dateISO: "2026-08-17", isWorkout: true }),
@@ -310,7 +348,7 @@ test("week rebuild accepts added day effort preferences coach_decide/light/norma
 
   for (const added_day_effort of ["coach_decide", "light", "normal"]) {
     const ctx = context({
-      feedback: feedback("too_few_days", { additional_days: "+1", added_day_effort }),
+      feedback: feedback("too_few_days", { desired_total_days: 3, added_day_effort }),
       currentWeek: { days: baseDays } as WeekRebuildContext["currentWeek"],
     });
     const proposal = proposeWeekRebuildDeterministic(ctx);
@@ -327,7 +365,7 @@ test("light effort request cannot be upgraded to normal", () => {
   ];
   const proposal = proposeWeekRebuildDeterministic(
     context({
-      feedback: feedback("too_few_days", { additional_days: "+2", added_day_effort: "light" }),
+      feedback: feedback("too_few_days", { desired_total_days: 3, added_day_effort: "light" }),
       currentWeek: { days } as WeekRebuildContext["currentWeek"],
     }),
   );
@@ -344,7 +382,7 @@ test("normal request may downgrade to light based on adjacency", () => {
   ];
   const proposal = proposeWeekRebuildDeterministic(
     context({
-      feedback: feedback("too_few_days", { additional_days: "+1", added_day_effort: "normal" }),
+      feedback: feedback("too_few_days", { desired_total_days: 2, added_day_effort: "normal" }),
       currentWeek: { days } as WeekRebuildContext["currentWeek"],
     }),
   );
@@ -361,7 +399,7 @@ test("coach_decide may choose different effort levels per added day", () => {
   ];
   const proposal = proposeWeekRebuildDeterministic(
     context({
-      feedback: feedback("too_few_days", { additional_days: "+2", added_day_effort: "coach_decide" }),
+      feedback: feedback("too_few_days", { desired_total_days: 4, added_day_effort: "coach_decide" }),
       currentWeek: { days } as WeekRebuildContext["currentWeek"],
     }),
   );

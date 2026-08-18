@@ -3,6 +3,7 @@ export {
   getWeekRebuildProposal,
   respondToWeekRebuild,
   applyWeekRebuildProposal,
+  rejectWeekRebuildProposal,
   computePlanStateHash,
 } from "./service";
 export type { StoredWeekRebuild } from "./service";

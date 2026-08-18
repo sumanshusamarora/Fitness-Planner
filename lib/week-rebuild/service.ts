@@ -8,7 +8,7 @@ import {
   workoutPlans,
   workoutSessions,
 } from "@/db/schema";
-import { toISODate } from "@/lib/dates";
+import { captureDays, computePlanStateHash as computeRevisionPlanStateHash, recordRevision } from "@/lib/plan-revisions";
 import { isAICoachAvailable } from "@/lib/coach/ai/client";
 import { OpenAICoachReasoner } from "@/lib/coach/reasoners/openai";
 import { buildWeekRebuildContext } from "./buildContext";
@@ -273,6 +273,36 @@ export async function respondToWeekRebuild(
  * Applies a reviewed week-rebuild. Rejects stale proposals, preserves completed
  * history, modifies only legal current/future days, and is idempotent.
  */
+export async function rejectWeekRebuildProposal(
+  userId: number,
+  proposalId: number,
+): Promise<{ ok: true; status: "rejected" }> {
+  return db.transaction(async (tx) => {
+    const row = (
+      await tx
+        .select()
+        .from(planAdjustmentProposals)
+        .where(
+          and(
+            eq(planAdjustmentProposals.id, proposalId),
+            eq(planAdjustmentProposals.userId, userId),
+            eq(planAdjustmentProposals.type, "week_rebuild"),
+          ),
+        )
+        .limit(1)
+    )[0];
+    if (!row) throw new Error("Rebuild proposal not found.");
+    if (row.status === "applied") throw new Error("Applied proposals cannot be rejected.");
+    if (row.status === "rejected") return { ok: true as const, status: "rejected" };
+
+    await tx
+      .update(planAdjustmentProposals)
+      .set({ status: "rejected", appliedAt: null })
+      .where(eq(planAdjustmentProposals.id, proposalId));
+    return { ok: true as const, status: "rejected" };
+  });
+}
+
 export async function applyWeekRebuildProposal(
   userId: number,
   proposalId: number,
@@ -312,11 +342,10 @@ export async function applyWeekRebuildProposal(
     )[0];
     if (!plan) throw new Error("Plan not found.");
 
-    // Stale-proposal protection: the plan must not have changed since the
-    // proposal was created.
     const currentHash = await computePlanStateHash(row.workoutPlanId);
     if (row.stateHash && currentHash !== row.stateHash) {
-      throw new Error("Your week changed since this suggestion was created. Please review again.");
+      await tx.update(planAdjustmentProposals).set({ status: "stale" }).where(eq(planAdjustmentProposals.id, proposalId));
+      throw new Error("This week changed since this suggestion was created. Create a fresh suggestion.");
     }
 
     const days = await tx
@@ -335,6 +364,11 @@ export async function applyWeekRebuildProposal(
         .filter((session) => session.status === "completed" || session.status === "ended_early" || session.status === "skipped" || session.status === "in_progress")
         .map((session) => session.workoutPlanDayId),
     );
+
+    const affectedDayIds = days
+      .filter((day) => !immutableDayIds.has(day.id))
+      .map((day) => day.id);
+    const beforeSnapshot = affectedDayIds.length ? await captureDays(tx, affectedDayIds) : { days: [] };
 
     const dayByNumber = new Map(days.map((day) => [day.dayNumber, day]));
 
@@ -376,6 +410,18 @@ export async function applyWeekRebuildProposal(
         await tx.update(workoutPlanDays).set({ title: "Rest", origin: null }).where(eq(workoutPlanDays.id, day.id));
       }
     }
+
+    const afterSnapshot = affectedDayIds.length ? await captureDays(tx, affectedDayIds) : { days: [] };
+    const stateHashAfter = await computeRevisionPlanStateHash(row.workoutPlanId, tx);
+    await recordRevision(tx, {
+      userId,
+      workoutPlanId: row.workoutPlanId,
+      kind: "week_rebuild",
+      beforeSnapshot,
+      afterSnapshot,
+      stateHashBefore: row.stateHash ?? currentHash,
+      stateHashAfter,
+    });
 
     await tx
       .update(planAdjustmentProposals)

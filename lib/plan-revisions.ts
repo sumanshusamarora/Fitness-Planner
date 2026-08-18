@@ -22,9 +22,9 @@ import type { Queryable } from "./session-guards";
  * day makes a restore fail atomically.
  */
 
-export type PlanRevisionKind = "move" | "swap" | "add_extra" | "remove_extra";
+export type PlanRevisionKind = "move" | "swap" | "add_extra" | "remove_extra" | "week_rebuild";
 
-export const RESTORABLE_REVISION_KINDS: PlanRevisionKind[] = ["move", "swap"];
+export const RESTORABLE_REVISION_KINDS: PlanRevisionKind[] = ["move", "swap", "week_rebuild"];
 
 export interface PlanRevisionExercise {
   exerciseId: number;

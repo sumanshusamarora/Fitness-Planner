@@ -120,6 +120,24 @@ export function WeekRebuildModal({
     setError(data.error ?? "Could not apply.");
   }
 
+  async function reject() {
+    setBusy(true);
+    setError(null);
+    const res = await fetch(`/api/week-rebuild/${proposal!.id}/reject`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const data = await res.json();
+    setBusy(false);
+    if (data.ok) {
+      onClose();
+      router.refresh();
+      return;
+    }
+    setError(data.error ?? "Could not reject.");
+  }
+
   function renderDetails() {
     if (!reason) return null;
 
@@ -172,18 +190,18 @@ export function WeekRebuildModal({
     }
 
     if (reason === "too_few_days") {
-      const additional = String(details.additional_days ?? "+1");
+      const desired = String(details.desired_total_days ?? "4");
       const effort = String(details.added_day_effort ?? "coach_decide");
       return (
         <div className="space-y-4">
           <div className="space-y-2">
-            <p className="text-sm text-zinc-400">How many additional training days would you realistically like?</p>
-            {["+1", "+2"].map((option) => (
+            <p className="text-sm text-zinc-400">Desired total training days this week:</p>
+            {["3", "4", "5", "6"].map((option) => (
               <button
                 key={option}
                 type="button"
-                onClick={() => setDetails({ ...details, additional_days: option })}
-                className={`w-full rounded-2xl px-4 py-3 text-left ${additional === option ? "bg-emerald-500 text-zinc-950" : "bg-zinc-800 text-zinc-100"}`}
+                onClick={() => setDetails({ ...details, desired_total_days: option })}
+                className={`w-full rounded-2xl px-4 py-3 text-left ${desired === option ? "bg-emerald-500 text-zinc-950" : "bg-zinc-800 text-zinc-100"}`}
               >
                 {option}
               </button>
@@ -372,14 +390,24 @@ export function WeekRebuildModal({
             )}
 
             {proposal.proposal.questions.length === 0 && (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={apply}
-                className="w-full rounded-2xl bg-emerald-500 py-4 text-lg font-bold text-zinc-950 transition active:scale-[0.98] disabled:opacity-60"
-              >
-                {busy ? "Applying…" : "ACCEPT CHANGES"}
-              </button>
+              <>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={apply}
+                  className="w-full rounded-2xl bg-emerald-500 py-4 text-lg font-bold text-zinc-950 transition active:scale-[0.98] disabled:opacity-60"
+                >
+                  {busy ? "Applying…" : "ACCEPT CHANGES"}
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={reject}
+                  className="w-full rounded-2xl border border-zinc-700 bg-zinc-800 py-3 text-base font-semibold text-zinc-200"
+                >
+                  REJECT
+                </button>
+              </>
             )}
             <button type="button" onClick={onClose} className="w-full rounded-2xl py-3 text-base font-semibold text-zinc-500">
               KEEP CURRENT WEEK

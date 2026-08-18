@@ -59,9 +59,9 @@ export const FOLLOW_UP_QUESTIONS: Record<WeekFeedbackReason, FollowUpQuestion[]>
   ],
   too_few_days: [
     {
-      id: "additional_days",
-      question: "How many additional training days would you realistically like?",
-      options: ["+1", "+2"],
+      id: "desired_total_days",
+      question: "Desired total training days this week:",
+      options: ["3", "4", "5", "6"],
     },
     {
       id: "added_day_effort",

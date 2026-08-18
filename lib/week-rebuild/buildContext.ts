@@ -169,7 +169,9 @@ export async function buildWeekRebuildContext(input: {
   const recentMuscles = [...new Set(exerciseRows.map((row) => row.primaryMuscle))];
 
   const completedSessions = days.filter((day) => day.sessionStatus === "completed").length;
-  const plannedSessions = days.filter((day) => day.isWorkout).length;
+  const prescribedSessions = days.filter((day) => day.isWorkout && day.origin !== "extra").length;
+  const extraSessions = days.filter((day) => day.isWorkout && day.origin === "extra").length;
+  const plannedSessions = prescribedSessions;
 
   const constraints = computeRebuildConstraints(days, input.feedback, {
     futureWeekExists: nextPlan.length > 0,
@@ -203,6 +205,8 @@ export async function buildWeekRebuildContext(input: {
       weekNumber: plan[0].weekNumber,
       startsOn: plan[0].startsOn,
       plannedSessions,
+      prescribedSessions,
+      extraSessions,
       completedSessions,
       days,
     },

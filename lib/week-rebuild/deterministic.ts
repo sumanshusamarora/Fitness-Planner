@@ -173,9 +173,13 @@ export function proposeWeekRebuildDeterministic(context: WeekRebuildContext): We
   }
 
   if (reason === "too_few_days") {
-    const extra = Number(String(details.additional_days ?? "+1").replace("+", "")) || 1;
+    const desiredRaw = Number(details.desired_total_days ?? details.additional_days ?? "4");
+    const desiredTotal = Number.isFinite(desiredRaw) && desiredRaw >= 1 ? Math.max(1, Math.round(desiredRaw)) : 4;
     const effortPref = addedDayEffortPreference(details.added_day_effort);
-    const source = context.currentWeek.days.find((day) => day.isWorkout);
+    const source = context.currentWeek.days.find((day) => day.isWorkout && day.origin !== "extra");
+    const totalWorkoutCount = context.currentWeek.days.filter((day) => day.isWorkout).length;
+    const totalNeed = Math.max(0, desiredTotal - totalWorkoutCount);
+
     if (source && context.recovery.poorRecovery) {
       summary = "Recovery is low right now, so no extra sessions were added.";
       safetyFlags.push("Poor recovery prevented additional training days.");
@@ -200,7 +204,8 @@ export function proposeWeekRebuildDeterministic(context: WeekRebuildContext): We
         if (effortPref === "light") return "light";
         if (effortPref === "normal") return adjacent ? "light" : "normal";
         if (adjacent) return "light";
-        return priorAddedCount === 0 ? "normal" : "light";
+        if (priorAddedCount % 2 === 0) return "normal";
+        return "light";
       };
 
       const spacingScore = (dayNumber: number): number => {
@@ -217,7 +222,7 @@ export function proposeWeekRebuildDeterministic(context: WeekRebuildContext): We
           .filter((day) => day.status === "rest")
           .slice()
           .sort((a, b) => spacingScore(b.dayNumber) - spacingScore(a.dayNumber) || a.dayNumber - b.dayNumber)
-          .slice(0, extra)
+          .slice(0, totalNeed)
           .map((day) => day.dayNumber),
       );
 
@@ -254,7 +259,7 @@ export function proposeWeekRebuildDeterministic(context: WeekRebuildContext): We
           exercises: effort === "light" ? lightExercises : normalExercises,
         };
       });
-      summary = `Added ${added} session${added === 1 ? "" : "s"} with recoverability-aware effort.`;
+      summary = `Desired total: ${desiredTotal}. Added ${added} session${added === 1 ? "" : "s"} with recoverability-aware effort.`;
     }
   }
 

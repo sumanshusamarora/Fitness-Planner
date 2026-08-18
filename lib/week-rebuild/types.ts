@@ -194,6 +194,8 @@ export interface WeekRebuildContext {
     weekNumber: number;
     startsOn: string;
     plannedSessions: number;
+    prescribedSessions: number;
+    extraSessions: number;
     completedSessions: number;
     days: RebuildDayContext[];
   };
