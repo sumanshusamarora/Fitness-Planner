@@ -22,7 +22,7 @@ let generateTextImpl: GenerateTextLike = generateText;
 const DEFAULT_MAX_OUTPUT_TOKENS = 16000;
 
 /** Bounded so a stalled provider call falls back to the deterministic coach instead of hanging. */
-const DEFAULT_TIMEOUT_MS = 120000;
+const DEFAULT_TIMEOUT_MS = 600000;
 
 /**
  * How many times to re-attempt after a transient invalid/empty structured

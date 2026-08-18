@@ -45,6 +45,17 @@ export const REASONING_EFFORT: Record<CoachMode, CoachReasoningEffort> = {
   week_rebuild: "high",
 };
 
+/**
+ * Per-effort request bounds. Extensive-reasoning calls (gpt-5.6-terra) can take
+ * minutes; give them room so the response isn't aborted mid-flight. These are a
+ * last-resort safety net against a truly stalled provider, not a target.
+ */
+const TIMEOUT_MS_BY_EFFORT: Record<CoachReasoningEffort, number> = {
+  high: 600_000,
+  medium: 300_000,
+  low: 180_000,
+};
+
 export interface CoachPrompt {
   instructions: string;
   input: string;
@@ -123,7 +134,7 @@ export async function runCoachDecision<T>(
     input: prompt.input,
     reasoningEffort,
     allowWebResearch: options.allowWebResearch,
-    timeoutMs: options.timeoutMs,
+    timeoutMs: options.timeoutMs ?? TIMEOUT_MS_BY_EFFORT[reasoningEffort],
   });
 
   if (!result.ok) {
