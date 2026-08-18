@@ -12,6 +12,10 @@ import {
 } from "@/db/schema";
 import { DomainError } from "@/lib/errors";
 import { measurementTypeFor, validateLoggedSet } from "@/lib/exercise-measurement";
+import {
+  recordInferredAvailabilityFromExerciseUse,
+  recordInferredAvailabilityFromReplacement,
+} from "@/lib/exercise-knowledge";
 import { requireInProgressSession } from "@/lib/session-guards";
 
 /**
@@ -217,7 +221,7 @@ export async function replaceSessionExercise(
   )[0];
   if (!replacement || !replacement.active) throw new Error("Replacement exercise not found.");
 
-  return db.transaction(async (tx) => {
+  const row = await db.transaction(async (tx) => {
     await tx
       .update(workoutSessionExercises)
       .set({ status: "replaced" })
@@ -239,6 +243,14 @@ export async function replaceSessionExercise(
       .returning();
     return row;
   });
+
+  await recordInferredAvailabilityFromReplacement(
+    userId,
+    exerciseId,
+    reason,
+  );
+
+  return row;
 }
 
 /**
@@ -405,6 +417,11 @@ export async function logSessionSet(
       setType: input.setType,
     })
     .returning();
+
+  if (input.setType === "working") {
+    await recordInferredAvailabilityFromExerciseUse(userId, input.exerciseId);
+  }
+
   return set;
 }
 

@@ -106,6 +106,11 @@ interface ActiveWorkoutNav {
   dayId: number;
 }
 
+interface ExerciseKnowledgeBadge {
+  preference: "preferred" | "dont_prefer" | null;
+  availability: "available" | "unavailable" | "unknown";
+}
+
 type Phase = "setup" | "rpe" | "rest" | "done";
 
 const RPE_OPTIONS = [5, 6, 7, 8, 9, 10];
@@ -190,6 +195,7 @@ export function ActiveWorkout({ data, nav }: { data: ActiveWorkoutData; nav?: Ac
   const [activitySpeedDraft, setActivitySpeedDraft] = useState<number | "">("");
   const [activityInclineDraft, setActivityInclineDraft] = useState<number | "">("");
   const [activityNotesDraft, setActivityNotesDraft] = useState("");
+  const [knowledgeByExerciseId, setKnowledgeByExerciseId] = useState<Record<number, ExerciseKnowledgeBadge>>({});
 
   const exercisesRef = useRef(exercises);
   const indexRef = useRef(index);
@@ -228,6 +234,44 @@ export function ActiveWorkout({ data, nav }: { data: ActiveWorkoutData; nav?: Ac
     const t = setTimeout(() => setRestLeft((s) => s - 1), 1000);
     return () => clearTimeout(t);
   }, [phase, restLeft]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const exerciseId = exercises[index]?.exerciseId;
+    if (!exerciseId || knowledgeByExerciseId[exerciseId]) return;
+
+    async function loadKnowledge() {
+      const res = await fetch(`/api/exercises/${exerciseId}/knowledge`);
+      const data = (await res.json().catch(() => ({}))) as {
+        knowledge?: {
+          userSignals?: {
+            preference?: "preferred" | "dont_prefer" | null;
+            knownAvailable?: boolean;
+            knownUnavailable?: boolean;
+          } | null;
+        };
+      };
+      if (cancelled || !data.knowledge) return;
+      const signals = data.knowledge.userSignals;
+      const availability = signals?.knownUnavailable
+        ? "unavailable"
+        : signals?.knownAvailable
+          ? "available"
+          : "unknown";
+      setKnowledgeByExerciseId((current) => ({
+        ...current,
+        [exerciseId]: {
+          preference: signals?.preference ?? null,
+          availability,
+        },
+      }));
+    }
+
+    void loadKnowledge();
+    return () => {
+      cancelled = true;
+    };
+  }, [exercises, index, knowledgeByExerciseId]);
 
   if (initialExercises.length === 0) {
     return <p className="text-lg text-zinc-400">No exercises in this workout.</p>;
@@ -633,6 +677,49 @@ export function ActiveWorkout({ data, nav }: { data: ActiveWorkoutData; nav?: Ac
     }
   }
 
+  async function setKnowledgeAction(
+    action:
+      | { type: "set_preference"; preference: "preferred" | "dont_prefer" | null }
+      | { type: "set_availability"; availability: "available" | "unavailable" | "unknown" },
+  ) {
+    setSaving(true);
+    setError(null);
+    try {
+      const body =
+        action.type === "set_preference"
+          ? { action: action.type, preference: action.preference }
+          : { action: action.type, availability: action.availability };
+
+      const res = await fetch(`/api/exercises/${ex.exerciseId}/knowledge`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(data.error ?? "Could not update exercise signal.");
+      }
+
+      setKnowledgeByExerciseId((current) => ({
+        ...current,
+        [ex.exerciseId]: {
+          preference:
+            action.type === "set_preference"
+              ? action.preference
+              : (current[ex.exerciseId]?.preference ?? null),
+          availability:
+            action.type === "set_availability"
+              ? action.availability
+              : (current[ex.exerciseId]?.availability ?? "unknown"),
+        },
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update exercise signal.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function endEarly(reason: string | null) {
     setEndEarlyOpen(false);
     setSaving(true);
@@ -708,6 +795,76 @@ export function ActiveWorkout({ data, nav }: { data: ActiveWorkoutData; nav?: Ac
               Exercise {index + 1}
             </p>
             <h2 className="mt-2 text-3xl font-bold">{ex.name}</h2>
+
+            <div className="mt-3 space-y-2">
+              <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Quick gym signals</p>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { key: "available", label: "Available at my gym" },
+                  { key: "unavailable", label: "Not available" },
+                  { key: "unknown", label: "Unknown" },
+                ].map((option) => {
+                  const active = knowledgeByExerciseId[ex.exerciseId]?.availability === option.key;
+                  return (
+                    <button
+                      key={option.key}
+                      type="button"
+                      onClick={() =>
+                        void setKnowledgeAction({
+                          type: "set_availability",
+                          availability: option.key as "available" | "unavailable" | "unknown",
+                        })
+                      }
+                      className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+                        active ? "bg-emerald-500 text-zinc-950" : "bg-zinc-800 text-zinc-200"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    void setKnowledgeAction({
+                      type: "set_preference",
+                      preference:
+                        knowledgeByExerciseId[ex.exerciseId]?.preference === "preferred"
+                          ? null
+                          : "preferred",
+                    })
+                  }
+                  className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+                    knowledgeByExerciseId[ex.exerciseId]?.preference === "preferred"
+                      ? "bg-emerald-500 text-zinc-950"
+                      : "bg-zinc-800 text-zinc-200"
+                  }`}
+                >
+                  Preferred
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void setKnowledgeAction({
+                      type: "set_preference",
+                      preference:
+                        knowledgeByExerciseId[ex.exerciseId]?.preference === "dont_prefer"
+                          ? null
+                          : "dont_prefer",
+                    })
+                  }
+                  className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+                    knowledgeByExerciseId[ex.exerciseId]?.preference === "dont_prefer"
+                      ? "bg-amber-400 text-zinc-950"
+                      : "bg-zinc-800 text-zinc-200"
+                  }`}
+                >
+                  Don&apos;t prefer
+                </button>
+              </div>
+            </div>
 
             <div className="mt-4">
               <ExerciseMedia media={ex.media} />

@@ -77,42 +77,52 @@ export function WeekRebuildModal({
     setBusy(true);
     setCoaching(true);
     setError(null);
-    const res = await fetch("/api/week-rebuild", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        planId,
-        feedback: { primaryReason: reason, secondaryReasons: [], structuredDetails: details, freeText: freeText || null },
-      }),
-    });
-    const data = await res.json();
-    setCoaching(false);
-    setBusy(false);
-    if (data.error) {
-      setError(data.error);
-      return;
+    try {
+      const res = await fetch("/api/week-rebuild", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          planId,
+          feedback: { primaryReason: reason, secondaryReasons: [], structuredDetails: details, freeText: freeText || null },
+        }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        setError(data.error);
+        return;
+      }
+      setProposal(data);
+      setStep("review");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not rebuild the week.");
+    } finally {
+      setCoaching(false);
+      setBusy(false);
     }
-    setProposal(data);
-    setStep("review");
   }
 
   async function answer(questionId: string, answer: string) {
     setBusy(true);
     setCoaching(true);
     setError(null);
-    const res = await fetch(`/api/week-rebuild/${proposal!.id}/answer`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ questionId, answer }),
-    });
-    const data = await res.json();
-    setCoaching(false);
-    setBusy(false);
-    if (data.error) {
-      setError(data.error);
-      return;
+    try {
+      const res = await fetch(`/api/week-rebuild/${proposal!.id}/answer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ questionId, answer }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        setError(data.error);
+        return;
+      }
+      setProposal(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not record the answer.");
+    } finally {
+      setCoaching(false);
+      setBusy(false);
     }
-    setProposal(data);
   }
 
   async function apply() {

@@ -18,6 +18,8 @@ export interface StructuredGenerateOptions<T> {
   reasoningEffort?: LLMReasoningEffort;
   allowWebResearch?: boolean;
   timeoutMs?: number;
+  /** Maximum output tokens (reasoning + generated text). Reasoning models need a generous budget. */
+  maxOutputTokens?: number;
 }
 
 export interface StructuredGenerationMetadata {

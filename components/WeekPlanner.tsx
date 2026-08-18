@@ -132,19 +132,24 @@ export function WeekPlanner({
     setBusy(true);
     setCoachingAdd(true);
     setError(null);
-    const res = await fetch("/api/plan-adjustments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "add", planId: week.planId, dayId: day.planDayId, effort }),
-    });
-    const data = await res.json();
-    setCoachingAdd(false);
-    setBusy(false);
-    if (data.error) {
-      setError(data.error);
-      return;
+    try {
+      const res = await fetch("/api/plan-adjustments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "add", planId: week.planId, dayId: day.planDayId, effort }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        setError(data.error);
+        return;
+      }
+      setSheet({ kind: "confirm-add", adjustment: data });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not propose the extra session.");
+    } finally {
+      setCoachingAdd(false);
+      setBusy(false);
     }
-    setSheet({ kind: "confirm-add", adjustment: data });
   }
 
   async function skipSession(day: WeekDayView, reason: string | null) {

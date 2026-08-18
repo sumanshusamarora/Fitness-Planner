@@ -20,6 +20,7 @@ import { measurementTypeFor } from "./exercise-measurement";
 import { getApprovedExternalReferences } from "./external-exercises";
 import { sanitizeInstructionsHtml } from "./external-exercises/sanitize";
 import { extractYoutubeVideoId } from "./media";
+import { recordInferredAvailabilityFromReplacement } from "./exercise-knowledge";
 import {
   recommendNextWeight,
   type ProgressionResult,
@@ -1226,11 +1227,17 @@ export async function skipSessionExercise(
     ["pending"],
     "Only a pending exercise can be skipped.",
   );
-  return db
+  const rows = await db
     .update(workoutSessionExercises)
     .set({ completed: false, status: "skipped", skipReason: reason })
     .where(eq(workoutSessionExercises.id, sse.id))
     .returning();
+
+  if (reason === "equipment_busy") {
+    await recordInferredAvailabilityFromReplacement(userId, exerciseId, reason);
+  }
+
+  return rows;
 }
 
 async function markRemainingNotAttempted(sessionId: number) {

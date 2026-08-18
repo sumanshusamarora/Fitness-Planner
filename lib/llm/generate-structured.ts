@@ -13,6 +13,17 @@ type GenerateTextCall = Parameters<typeof generateText>[0];
 
 let generateTextImpl: GenerateTextLike = generateText;
 
+/**
+ * Reasoning models (gpt-5, o-series) count both reasoning tokens and the final
+ * output against `max_output_tokens`. Leaving it unset makes the model spend
+ * its whole budget on reasoning and return "no output". This default gives the
+ * largest weekly plans room to reason and still emit the full JSON proposal.
+ */
+const DEFAULT_MAX_OUTPUT_TOKENS = 16000;
+
+/** Bounded so a stalled provider call falls back to the deterministic coach instead of hanging. */
+const DEFAULT_TIMEOUT_MS = 120000;
+
 function toProviderReasoning(effort?: LLMReasoningEffort): "low" | "medium" | "high" | undefined {
   if (!effort) return undefined;
   return effort;
@@ -63,7 +74,8 @@ export async function generateStructured<T>(
       output: Output.object({ schema: options.schema, name: options.schemaName }),
       reasoning: toProviderReasoning(options.reasoningEffort),
       providerOptions: providerOptionsFor(options.model, options.reasoningEffort),
-      timeout: options.timeoutMs,
+      maxOutputTokens: options.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+      timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     });
 
     return {

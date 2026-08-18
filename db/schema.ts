@@ -65,11 +65,193 @@ export const exercises = pgTable(
     primaryMuscle: text("primary_muscle").notNull(),
     equipment: text("equipment").notNull(),
     measurementType: text("measurement_type"),
+    modality: text("modality"),
+    movementPattern: text("movement_pattern"),
+    mechanics: text("mechanics"),
+    laterality: text("laterality"),
+    stability: text("stability"),
+    skillDemand: text("skill_demand"),
+    progressionSuitability: text("progression_suitability"),
     instructions: text("instructions"),
     videoUrl: text("video_url"),
     active: boolean("active").notNull().default(true),
   },
   (table) => [uniqueIndex("exercises_name_idx").on(table.name)],
+);
+
+/** Canonical muscle dictionary (exercise body-part hierarchy is intentionally avoided). */
+export const muscles = pgTable(
+  "muscles",
+  {
+    id: serial("id").primaryKey(),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex("muscles_code_idx").on(table.code)],
+);
+
+/** Many-to-many muscle role assignments for canonical exercises. */
+export const exerciseMuscles = pgTable(
+  "exercise_muscles",
+  {
+    id: serial("id").primaryKey(),
+    exerciseId: integer("exercise_id")
+      .notNull()
+      .references(() => exercises.id),
+    muscleId: integer("muscle_id")
+      .notNull()
+      .references(() => muscles.id),
+    role: text("role").notNull(), // primary | secondary
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("exercise_muscles_exercise_idx").on(table.exerciseId),
+    index("exercise_muscles_muscle_idx").on(table.muscleId),
+    uniqueIndex("exercise_muscles_unique_idx").on(table.exerciseId, table.muscleId, table.role),
+  ],
+);
+
+/** Equipment capability types, distinct from canonical exercises. */
+export const equipmentTypes = pgTable(
+  "equipment_types",
+  {
+    id: serial("id").primaryKey(),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex("equipment_types_code_idx").on(table.code)],
+);
+
+/** Many-to-many exercise compatibility/requirements against equipment types. */
+export const exerciseEquipmentTypes = pgTable(
+  "exercise_equipment_types",
+  {
+    id: serial("id").primaryKey(),
+    exerciseId: integer("exercise_id")
+      .notNull()
+      .references(() => exercises.id),
+    equipmentTypeId: integer("equipment_type_id")
+      .notNull()
+      .references(() => equipmentTypes.id),
+    requirement: text("requirement").notNull().default("supported"), // required | supported
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("exercise_equipment_types_exercise_idx").on(table.exerciseId),
+    index("exercise_equipment_types_equipment_idx").on(table.equipmentTypeId),
+    uniqueIndex("exercise_equipment_types_unique_idx").on(
+      table.exerciseId,
+      table.equipmentTypeId,
+      table.requirement,
+    ),
+  ],
+);
+
+/** Optional user-specific local machine/equipment instances. */
+export const userGymEquipment = pgTable(
+  "user_gym_equipment",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    equipmentTypeId: integer("equipment_type_id")
+      .notNull()
+      .references(() => equipmentTypes.id),
+    equipmentModel: text("equipment_model"),
+    nickname: text("nickname"),
+    knownAvailability: text("known_availability").notNull().default("unknown"),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("user_gym_equipment_user_idx").on(table.userId),
+    index("user_gym_equipment_equipment_idx").on(table.equipmentTypeId),
+  ],
+);
+
+/** User-scoped availability signals (explicit + inferred) for equipment types. */
+export const userEquipmentAvailabilitySignals = pgTable(
+  "user_equipment_availability_signals",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    equipmentTypeId: integer("equipment_type_id")
+      .notNull()
+      .references(() => equipmentTypes.id),
+    availability: text("availability").notNull(), // available | unavailable | unknown
+    source: text("source").notNull(), // explicit | inferred_performed | inferred_busy | inferred_unavailable
+    exerciseId: integer("exercise_id").references(() => exercises.id, {
+      onDelete: "set null",
+    }),
+    workoutSessionId: integer("workout_session_id").references(() => workoutSessions.id, {
+      onDelete: "set null",
+    }),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("user_equipment_availability_user_idx").on(table.userId),
+    index("user_equipment_availability_equipment_idx").on(table.equipmentTypeId),
+    index("user_equipment_availability_created_idx").on(table.createdAt),
+  ],
+);
+
+/** Explicit user signals for exercise preference and future anchor groundwork. */
+export const userExerciseProfiles = pgTable(
+  "user_exercise_profiles",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    exerciseId: integer("exercise_id")
+      .notNull()
+      .references(() => exercises.id),
+    preference: text("preference"), // preferred | dont_prefer
+    anchorState: text("anchor_state"), // candidate | current | none
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("user_exercise_profiles_user_exercise_idx").on(
+      table.userId,
+      table.exerciseId,
+    ),
+    index("user_exercise_profiles_user_idx").on(table.userId),
+  ],
+);
+
+/** Structured knowledge relationships among canonical exercises. */
+export const exerciseRelationships = pgTable(
+  "exercise_relationships",
+  {
+    id: serial("id").primaryKey(),
+    fromExerciseId: integer("from_exercise_id")
+      .notNull()
+      .references(() => exercises.id),
+    toExerciseId: integer("to_exercise_id")
+      .notNull()
+      .references(() => exercises.id),
+    relationshipType: text("relationship_type").notNull(), // very_similar | substitute | related
+    source: text("source").notNull().default("curated"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("exercise_relationships_from_idx").on(table.fromExerciseId),
+    index("exercise_relationships_to_idx").on(table.toExerciseId),
+    uniqueIndex("exercise_relationships_unique_idx").on(
+      table.fromExerciseId,
+      table.toExerciseId,
+      table.relationshipType,
+    ),
+  ],
 );
 
 export const exerciseMedia = pgTable(
@@ -344,6 +526,10 @@ export const workoutSessionExercises = pgTable(
     origin: text("origin").notNull().default("planned"),
     replacementReason: text("replacement_reason"),
     replacesSessionExerciseId: integer("replaces_session_exercise_id"),
+    userGymEquipmentId: integer("user_gym_equipment_id").references(
+      () => userGymEquipment.id,
+      { onDelete: "set null" },
+    ),
     notes: text("notes"),
   },
   (table) => [

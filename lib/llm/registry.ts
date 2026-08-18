@@ -1,28 +1,40 @@
-import { createProviderRegistry } from "ai";
 import { createDeepSeek } from "@ai-sdk/deepseek";
 import { createOpenAI } from "@ai-sdk/openai";
+import type { LanguageModel } from "ai";
 import { getProviderApiKey, parseModelIdentifier } from "./config";
 
-let configured = false;
+type ModelFactory = (modelId: string) => LanguageModel;
 
-function ensureProviderRegistryConfigured(): void {
-  if (configured) return;
+let cached: Record<string, ModelFactory> | null = null;
 
-  const registry = createProviderRegistry({
-    openai: createOpenAI({ apiKey: getProviderApiKey("openai") }),
-    deepseek: createDeepSeek({ apiKey: getProviderApiKey("deepseek") }),
-  });
-
-  globalThis.AI_SDK_DEFAULT_PROVIDER = registry as unknown as typeof globalThis.AI_SDK_DEFAULT_PROVIDER;
-  configured = true;
+function factories(): Record<string, ModelFactory> {
+  if (!cached) {
+    cached = {
+      openai: createOpenAI({ apiKey: getProviderApiKey("openai") }),
+      deepseek: createDeepSeek({ apiKey: getProviderApiKey("deepseek") }),
+    };
+  }
+  return cached;
 }
 
-export function ensureModelResolvable(model: string): string {
-  ensureProviderRegistryConfigured();
+/**
+ * Resolves a `provider:model` identifier to a concrete language model object.
+ *
+ * We deliberately do NOT route through `createProviderRegistry` /
+ * `AI_SDK_DEFAULT_PROVIDER` here: that registry emits v2-specification models,
+ * and the AI SDK's v2→v4 compatibility proxy mangles structured-output results
+ * (corrupting `usage`/`finishReason` and dropping the parsed output, surfacing
+ * as "No output generated"). Passing the native model object avoids that layer.
+ */
+export function ensureModelResolvable(model: string): LanguageModel {
   const parsed = parseModelIdentifier(model);
-  return parsed.fullId;
+  const factory = factories()[parsed.providerId];
+  if (!factory) {
+    throw new Error(`Unsupported LLM provider "${parsed.providerId}" for model "${model}".`);
+  }
+  return factory(parsed.modelId);
 }
 
 export function resetProviderRegistryForTests(): void {
-  configured = false;
+  cached = null;
 }

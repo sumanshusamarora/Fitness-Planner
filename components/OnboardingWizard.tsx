@@ -142,14 +142,19 @@ export function OnboardingWizard({
     }
 
     setCoaching(true);
-    const propRes = await fetch("/api/plans/initial-proposal", { method: "POST" });
-    if (!propRes.ok) {
+    try {
+      const propRes = await fetch("/api/plans/initial-proposal", { method: "POST" });
+      if (!propRes.ok) {
+        setError("Could not build your week. Try again.");
+        return;
+      }
+      router.push("/onboarding/review");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not build your week. Try again.");
+    } finally {
       setCoaching(false);
-      setError("Could not build your week. Try again.");
       setBusy(false);
-      return;
     }
-    router.push("/onboarding/review");
   }
 
   function next() {
