@@ -4,11 +4,14 @@ import { after, test } from "node:test";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import {
+  equipmentTypes,
   planAdjustmentProposals,
   planRevisions,
   exercises,
   recoveryLogs,
   sessionPlanSnapshots,
+  userExerciseProfiles,
+  userGymEquipment,
   users,
   workoutPlanDays,
   workoutPlanExercises,
@@ -176,6 +179,146 @@ test("replacement preserves the original prescription and reason", async () => {
   assert.equal(repl?.targetSets, original?.targetSets, "replacement inherits the original prescription target sets");
   assert.equal(repl?.minReps, original?.minReps);
   assert.equal(repl?.maxReps, original?.maxReps);
+});
+
+test("temporary substitution does not silently change anchor state", async () => {
+  const { user, day } = await newUser("D-temp");
+  const exs = await dayExerciseIds(day.id);
+  const plannedIds = exs.map((e) => e.exerciseId);
+  const replacementId = await replacementExerciseIdNotInPlan(plannedIds);
+  assert.ok(replacementId);
+  const session = await createSession(user.id, day.id);
+
+  await db.insert(userExerciseProfiles).values({
+    userId: user.id,
+    exerciseId: exs[0].exerciseId,
+    preference: null,
+    anchorState: "current",
+  });
+
+  await replaceSessionExercise(
+    user.id,
+    session.id,
+    exs[0].exerciseId,
+    replacementId!,
+    "equipment_busy",
+    { replacementScope: "temporary", confirmAnchorChange: true },
+  );
+
+  const originalProfile = (
+    await db
+      .select()
+      .from(userExerciseProfiles)
+      .where(and(eq(userExerciseProfiles.userId, user.id), eq(userExerciseProfiles.exerciseId, exs[0].exerciseId)))
+      .limit(1)
+  )[0];
+  const replacementProfile = (
+    await db
+      .select()
+      .from(userExerciseProfiles)
+      .where(and(eq(userExerciseProfiles.userId, user.id), eq(userExerciseProfiles.exerciseId, replacementId!)))
+      .limit(1)
+  )[0];
+
+  assert.equal(originalProfile?.anchorState, "current");
+  assert.equal(replacementProfile, undefined);
+});
+
+test("anchor change replacement requires explicit confirmation", async () => {
+  const { user, day } = await newUser("D-confirm");
+  const exs = await dayExerciseIds(day.id);
+  const plannedIds = exs.map((e) => e.exerciseId);
+  const replacementId = await replacementExerciseIdNotInPlan(plannedIds);
+  assert.ok(replacementId);
+  const session = await createSession(user.id, day.id);
+
+  await assert.rejects(
+    () =>
+      replaceSessionExercise(
+        user.id,
+        session.id,
+        exs[0].exerciseId,
+        replacementId!,
+        "equipment_unavailable",
+        { replacementScope: "anchor_change", confirmAnchorChange: false },
+      ),
+    /explicit confirmation/i,
+  );
+
+  await replaceSessionExercise(
+    user.id,
+    session.id,
+    exs[0].exerciseId,
+    replacementId!,
+    "equipment_unavailable",
+    { replacementScope: "anchor_change", confirmAnchorChange: true },
+  );
+
+  const originalProfile = (
+    await db
+      .select()
+      .from(userExerciseProfiles)
+      .where(and(eq(userExerciseProfiles.userId, user.id), eq(userExerciseProfiles.exerciseId, exs[0].exerciseId)))
+      .limit(1)
+  )[0];
+  const replacementProfile = (
+    await db
+      .select()
+      .from(userExerciseProfiles)
+      .where(and(eq(userExerciseProfiles.userId, user.id), eq(userExerciseProfiles.exerciseId, replacementId!)))
+      .limit(1)
+  )[0];
+
+  assert.equal(originalProfile?.anchorState, "none");
+  assert.equal(replacementProfile?.anchorState, "current");
+  assert.equal(replacementProfile?.preference, "preferred");
+});
+
+test("replacement preserves selected machine-instance provenance", async () => {
+  const { user, day } = await newUser("D-machine");
+  const exs = await dayExerciseIds(day.id);
+  const plannedIds = exs.map((e) => e.exerciseId);
+  const replacementId = await replacementExerciseIdNotInPlan(plannedIds);
+  assert.ok(replacementId);
+  const session = await createSession(user.id, day.id);
+
+  const stamp = Date.now();
+  const [type] = await db
+    .insert(equipmentTypes)
+    .values({ code: `prov-${stamp}`, name: `Provenance ${stamp}` })
+    .returning();
+  const [machine] = await db
+    .insert(userGymEquipment)
+    .values({
+      userId: user.id,
+      equipmentTypeId: type.id,
+      equipmentModel: "Matrix Chest Press",
+      nickname: "Rack side",
+      knownAvailability: "available",
+    })
+    .returning();
+
+  const [originalSse] = await db
+    .select()
+    .from(workoutSessionExercises)
+    .where(and(eq(workoutSessionExercises.workoutSessionId, session.id), eq(workoutSessionExercises.exerciseId, exs[0].exerciseId)))
+    .limit(1);
+
+  await db
+    .update(workoutSessionExercises)
+    .set({ userGymEquipmentId: machine.id })
+    .where(eq(workoutSessionExercises.id, originalSse.id));
+
+  const replacement = await replaceSessionExercise(
+    user.id,
+    session.id,
+    exs[0].exerciseId,
+    replacementId!,
+    "equipment_busy",
+    { replacementScope: "temporary", confirmAnchorChange: true },
+  );
+
+  assert.equal(replacement.userGymEquipmentId, machine.id);
 });
 
 test("replaced original cannot receive sets", async () => {

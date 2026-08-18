@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { COACH_MODEL, getAICoachUnavailableReason, isAICoachAvailable } from "./client";
+import { getAICoachUnavailableReason, isAICoachAvailable } from "./client";
+import { getConfiguredCoachModel } from "@/lib/llm/config";
 import { generateStructured } from "@/lib/llm/generate-structured";
 import {
   COACH_PROMPT_VERSION,
@@ -110,7 +111,8 @@ export async function runCoachDecision<T>(
   }
 
   const { mode, schema } = options;
-  const model = options.model ?? COACH_MODEL;
+  const reasoningEffort = options.reasoningEffort ?? REASONING_EFFORT[mode];
+  const model = options.model ?? getConfiguredCoachModel(reasoningEffort);
   const prompt = buildCoachPrompt(mode, options.context, options.constraints);
 
   const result = await generateStructured<T>({
@@ -119,7 +121,7 @@ export async function runCoachDecision<T>(
     schemaName: `coach_decision_${mode}`,
     system: prompt.instructions,
     input: prompt.input,
-    reasoningEffort: options.reasoningEffort ?? REASONING_EFFORT[mode],
+    reasoningEffort,
     allowWebResearch: options.allowWebResearch,
     timeoutMs: options.timeoutMs,
   });

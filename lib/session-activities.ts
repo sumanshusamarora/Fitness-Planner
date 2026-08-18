@@ -15,6 +15,8 @@ import { measurementTypeFor, validateLoggedSet } from "@/lib/exercise-measuremen
 import {
   recordInferredAvailabilityFromExerciseUse,
   recordInferredAvailabilityFromReplacement,
+  setExerciseAnchorState,
+  setUserExercisePreference,
 } from "@/lib/exercise-knowledge";
 import { requireInProgressSession } from "@/lib/session-guards";
 
@@ -39,6 +41,8 @@ export const REPLACEMENT_REASONS = [
   "other",
 ] as const;
 export type ReplacementReason = (typeof REPLACEMENT_REASONS)[number];
+
+export type ReplacementScope = "temporary" | "anchor_change";
 
 export interface SessionActivityInput {
   activityType: ActivityType;
@@ -178,9 +182,19 @@ export async function replaceSessionExercise(
   exerciseId: number,
   replacementExerciseId: number,
   reason: ReplacementReason,
+  options?: { replacementScope?: ReplacementScope; confirmAnchorChange?: boolean },
 ) {
   await requireInProgressSession(userId, sessionId);
   if (exerciseId === replacementExerciseId) throw new Error("Choose a different exercise.");
+
+  const replacementScope: ReplacementScope = options?.replacementScope ?? "temporary";
+  if (replacementScope === "anchor_change" && options?.confirmAnchorChange !== true) {
+    throw new DomainError(
+      "Anchor changes require explicit confirmation.",
+      "ANCHOR_CHANGE_CONFIRMATION_REQUIRED",
+      409,
+    );
+  }
 
   const planned = (
     await db
@@ -239,6 +253,7 @@ export async function replaceSessionExercise(
         origin: "replacement",
         replacementReason: reason,
         replacesSessionExerciseId: planned.id,
+        userGymEquipmentId: planned.userGymEquipmentId ?? null,
       })
       .returning();
     return row;
@@ -249,6 +264,14 @@ export async function replaceSessionExercise(
     exerciseId,
     reason,
   );
+
+  if (replacementScope === "anchor_change") {
+    await Promise.all([
+      setExerciseAnchorState(userId, exerciseId, "none"),
+      setExerciseAnchorState(userId, replacementExerciseId, "current"),
+      setUserExercisePreference(userId, replacementExerciseId, "preferred"),
+    ]);
+  }
 
   return row;
 }

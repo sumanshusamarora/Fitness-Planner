@@ -20,6 +20,8 @@ export interface StructuredGenerateOptions<T> {
   timeoutMs?: number;
   /** Maximum output tokens (reasoning + generated text). Reasoning models need a generous budget. */
   maxOutputTokens?: number;
+  /** Retries for transient invalid/empty structured outputs before falling back. */
+  maxRetries?: number;
 }
 
 export interface StructuredGenerationMetadata {

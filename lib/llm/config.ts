@@ -1,6 +1,14 @@
-import type { ParsedModelIdentifier } from "./types";
+import type { LLMReasoningEffort, ParsedModelIdentifier } from "./types";
 
-export const DEFAULT_COACH_LLM_MODEL = "openai:gpt-5";
+/**
+ * Default OpenAI models, split by reasoning demand:
+ * - `gpt-5.6-terra` handles the extensive-reasoning planning tasks (initial /
+ *   next week, week rebuild).
+ * - `gpt-5.6-luna` handles quick, low/medium-reasoning decisions (extra
+ *   session, recovery review, exercise substitution, nutrition review).
+ */
+export const DEFAULT_COACH_LLM_MODEL = "openai:gpt-5.6-luna";
+export const DEFAULT_COACH_LLM_MODEL_REASONING = "openai:gpt-5.6-terra";
 
 function envOr(name: string): string | null {
   const value = process.env[name];
@@ -11,14 +19,20 @@ function withOpenAIPrefix(modelId: string): string {
   return modelId.includes(":") ? modelId : `openai:${modelId}`;
 }
 
-export function getConfiguredCoachModel(): string {
+/**
+ * Resolves the configured coach model for a given reasoning effort. An explicit
+ * `COACH_LLM_MODEL` / legacy `OPENAI_COACH_MODEL` override always wins; when
+ * absent, high-effort calls use the reasoning model and everything else uses
+ * the quick model.
+ */
+export function getConfiguredCoachModel(effort?: LLMReasoningEffort): string {
   const explicit = envOr("COACH_LLM_MODEL");
   if (explicit) return withOpenAIPrefix(explicit);
 
   const legacyOpenAIModel = envOr("OPENAI_COACH_MODEL");
   if (legacyOpenAIModel) return withOpenAIPrefix(legacyOpenAIModel);
 
-  return DEFAULT_COACH_LLM_MODEL;
+  return effort === "high" ? DEFAULT_COACH_LLM_MODEL_REASONING : DEFAULT_COACH_LLM_MODEL;
 }
 
 export function parseModelIdentifier(input: string): ParsedModelIdentifier {

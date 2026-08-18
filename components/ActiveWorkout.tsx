@@ -111,6 +111,48 @@ interface ExerciseKnowledgeBadge {
   availability: "available" | "unavailable" | "unknown";
 }
 
+interface ReplacementCandidate {
+  exerciseId: number;
+  name: string;
+  relationship: "very_similar" | "substitute" | "related" | "taxonomy";
+  movementPattern: string | null;
+  primaryMuscles: string[];
+  secondaryMuscles: string[];
+  equipmentTypes: string[];
+  availability: "available" | "unavailable" | "unknown";
+  usedBefore: boolean;
+  successfulExposures: number;
+  preference: "preferred" | "dont_prefer" | null;
+  painHistory: number;
+  equipmentBusyFrequency: number;
+  anchorState: "none" | "candidate" | "current" | null;
+  measurementType: string;
+  score: number;
+  scoreNotes: string[];
+}
+
+interface ReplacementDecision {
+  decision: "keep_current" | "replace";
+  selectedExerciseId: number | null;
+  replacementScope: "temporary" | "anchor_change" | null;
+  reasonCode: string;
+  rationale: string[];
+}
+
+interface ReplacementSource {
+  source: "llm" | "deterministic_fallback";
+  provider: string | null;
+  model: string;
+  label: string;
+}
+
+interface ReplacementRecommendation {
+  decision: ReplacementDecision;
+  source: ReplacementSource;
+  recommended: ReplacementCandidate | null;
+  candidates: ReplacementCandidate[];
+}
+
 type Phase = "setup" | "rpe" | "rest" | "done";
 
 const RPE_OPTIONS = [5, 6, 7, 8, 9, 10];
@@ -177,8 +219,8 @@ export function ActiveWorkout({ data, nav }: { data: ActiveWorkoutData; nav?: Ac
   const [activityKind, setActivityKind] = useState<"warmup" | "cardio" | "mobility" | "cooldown" | null>(null);
   const [activityMinutes, setActivityMinutes] = useState(10);
   const [replaceReason, setReplaceReason] = useState<string | null>(null);
-  const [replaceQuery, setReplaceQuery] = useState("");
-  const [replaceResults, setReplaceResults] = useState<{ id: number; name: string; primaryMuscle: string }[]>([]);
+  const [replaceLoading, setReplaceLoading] = useState(false);
+  const [replaceRecommendation, setReplaceRecommendation] = useState<ReplacementRecommendation | null>(null);
   const [setMenu, setSetMenu] = useState<LoggedSet | null>(null);
   const [setEditor, setSetEditor] = useState<LoggedSet | null>(null);
   const [setEditorWeight, setSetEditorWeight] = useState(0);
@@ -633,27 +675,56 @@ export function ActiveWorkout({ data, nav }: { data: ActiveWorkoutData; nav?: Ac
     }
   }
 
-  async function searchReplace(query: string) {
-    const res = await fetch(`/api/exercises/search?q=${encodeURIComponent(query)}`);
-    const data = await res.json();
-    setReplaceResults(data.exercises ?? []);
+  async function loadReplacementOptions(reason: string) {
+    setReplaceLoading(true);
+    setReplaceRecommendation(null);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/sessions/${sessionId}/exercises/${ex.exerciseId}/replacement-options?reason=${encodeURIComponent(reason)}`,
+      );
+      const data = (await res.json().catch(() => ({}))) as ReplacementRecommendation & { error?: string };
+      if (!res.ok) {
+        throw new Error(data.error ?? "Could not load replacement options.");
+      }
+      setReplaceRecommendation({
+        decision: data.decision,
+        source: data.source,
+        recommended: data.recommended,
+        candidates: data.candidates,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load replacement options.");
+    } finally {
+      setReplaceLoading(false);
+    }
   }
 
-  async function doReplace(replacementExerciseId: number) {
+  async function doReplace(
+    replacementExerciseId: number,
+    replacementScope: "temporary" | "anchor_change" = "temporary",
+    confirmAnchorChange = false,
+  ) {
     setSaving(true);
     const res = await fetch(`/api/sessions/${sessionId}/exercises/${ex.exerciseId}/replace`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ replacementExerciseId, reason: replaceReason ?? "other" }),
+      body: JSON.stringify({
+        replacementExerciseId,
+        reason: replaceReason ?? "other",
+        replacementScope,
+        confirmAnchorChange,
+      }),
     });
     setSaving(false);
     if (res.ok) {
       setReplaceOpen(false);
       setReplaceReason(null);
-      setReplaceQuery("");
+      setReplaceRecommendation(null);
       router.refresh();
     } else {
-      setError("Could not replace this exercise.");
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      setError(data.error ?? "Could not replace this exercise.");
     }
   }
 
@@ -1255,7 +1326,7 @@ export function ActiveWorkout({ data, nav }: { data: ActiveWorkoutData; nav?: Ac
               Add activity
             </SheetButton>
             {ex.origin === "planned" && ex.status === "pending" && (
-              <SheetButton onClick={() => { setMenuOpen(false); setReplaceOpen(true); }}>
+              <SheetButton onClick={() => { setMenuOpen(false); setReplaceReason(null); setReplaceRecommendation(null); setReplaceOpen(true); }}>
                 Replace exercise
               </SheetButton>
             )}
@@ -1390,7 +1461,7 @@ export function ActiveWorkout({ data, nav }: { data: ActiveWorkoutData; nav?: Ac
       )}
 
       {replaceOpen && (
-        <Overlay onClose={() => setReplaceOpen(false)}>
+        <Overlay onClose={() => { setReplaceOpen(false); setReplaceReason(null); setReplaceRecommendation(null); }}>
           <h2 className="mb-3 text-2xl font-bold">Replace {ex.name}</h2>
           {!replaceReason ? (
             <div className="space-y-2">
@@ -1402,7 +1473,13 @@ export function ActiveWorkout({ data, nav }: { data: ActiveWorkoutData; nav?: Ac
                 { key: "preference", label: "Prefer something else" },
                 { key: "other", label: "Other" },
               ].map((r) => (
-                <SheetButton key={r.key} onClick={() => setReplaceReason(r.key)}>
+                <SheetButton
+                  key={r.key}
+                  onClick={() => {
+                    setReplaceReason(r.key);
+                    void loadReplacementOptions(r.key);
+                  }}
+                >
                   {r.label}
                 </SheetButton>
               ))}
@@ -1410,23 +1487,123 @@ export function ActiveWorkout({ data, nav }: { data: ActiveWorkoutData; nav?: Ac
             </div>
           ) : (
             <div className="space-y-3">
-              <div className="flex gap-2">
-                <input
-                  value={replaceQuery}
-                  onChange={(e) => { setReplaceQuery(e.target.value); searchReplace(e.target.value); }}
-                  placeholder="Search exercises"
-                  className="flex-1 rounded-2xl border border-zinc-700 bg-zinc-800 p-3 text-zinc-100"
-                />
+              {replaceLoading && <Loader compact />}
+
+              {replaceRecommendation && (
+                <>
+                  <div className="rounded-2xl border border-zinc-800 bg-zinc-800/50 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">Coach</p>
+                    <p className="mt-1 text-sm text-zinc-300">{replaceRecommendation.source.label}</p>
+
+                    {replaceRecommendation.decision.decision === "keep_current" ? (
+                      <div className="mt-3 space-y-2">
+                        <p className="text-lg font-semibold text-zinc-100">Keep current exercise</p>
+                        <ul className="list-disc space-y-1 pl-5 text-sm text-zinc-300">
+                          {replaceRecommendation.decision.rationale.slice(0, 3).map((line, idx) => (
+                            <li key={idx}>{line}</li>
+                          ))}
+                        </ul>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setReplaceOpen(false);
+                            setReplaceReason(null);
+                            setReplaceRecommendation(null);
+                          }}
+                          className="mt-2 w-full rounded-2xl bg-zinc-900 py-3 text-sm font-semibold text-zinc-100"
+                        >
+                          Keep current exercise
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="mt-3 space-y-2">
+                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-400">Recommended</p>
+                        <p className="text-lg font-semibold text-zinc-100">
+                          {replaceRecommendation.recommended?.name ?? "Best available option"}
+                        </p>
+                        {replaceRecommendation.recommended && (
+                          <p className="text-sm text-zinc-400">
+                            {replaceRecommendation.recommended.relationship === "very_similar"
+                              ? "Very similar"
+                              : replaceRecommendation.recommended.relationship === "substitute"
+                                ? "Strong substitute"
+                                : "Good match"}
+                            {replaceRecommendation.recommended.availability === "available" ? " · Available at your gym" : ""}
+                            {replaceRecommendation.recommended.usedBefore && replaceRecommendation.recommended.successfulExposures > 0
+                              ? " · Used successfully before"
+                              : ""}
+                          </p>
+                        )}
+                        <ul className="list-disc space-y-1 pl-5 text-sm text-zinc-300">
+                          {replaceRecommendation.decision.rationale.slice(0, 3).map((line, idx) => (
+                            <li key={idx}>{line}</li>
+                          ))}
+                        </ul>
+                        {replaceRecommendation.recommended && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void doReplace(
+                                replaceRecommendation.recommended!.exerciseId,
+                                replaceRecommendation.decision.replacementScope ?? "temporary",
+                                true,
+                              )
+                            }
+                            className="mt-2 w-full rounded-2xl bg-emerald-500 py-3 text-sm font-bold text-zinc-950"
+                          >
+                            {(replaceRecommendation.decision.replacementScope ?? "temporary") === "anchor_change"
+                              ? "Confirm anchor change and use this"
+                              : "Use this"}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {replaceRecommendation.candidates.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">Other good options</p>
+                      <div className="max-h-72 space-y-2 overflow-y-auto">
+                        {replaceRecommendation.candidates.map((candidate) => (
+                          <button
+                            key={candidate.exerciseId}
+                            type="button"
+                            onClick={() => void doReplace(candidate.exerciseId, "temporary", true)}
+                            className="flex w-full items-center justify-between rounded-2xl bg-zinc-800 px-4 py-3 text-left"
+                          >
+                            <div>
+                              <p className="font-semibold text-zinc-100">{candidate.name}</p>
+                              <p className="text-xs text-zinc-400">
+                                {candidate.relationship === "taxonomy"
+                                  ? "Matched by pattern and target"
+                                  : candidate.relationship.replace("_", " ")}
+                                {candidate.availability === "available" ? " · Available" : ""}
+                              </p>
+                            </div>
+                            <span className="text-sm text-zinc-400">{candidate.primaryMuscles[0] ?? ""}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {!replaceLoading && !replaceRecommendation && (
+                <p className="text-sm text-zinc-400">No replacement options found yet.</p>
+              )}
+
+              <div className="space-y-2">
+                <SheetButton
+                  onClick={() => {
+                    setReplaceReason(null);
+                    setReplaceRecommendation(null);
+                  }}
+                >
+                  Change reason
+                </SheetButton>
               </div>
-              <div className="max-h-72 space-y-2 overflow-y-auto">
-                {replaceResults.map((r) => (
-                  <button key={r.id} type="button" onClick={() => doReplace(r.id)} className="flex w-full items-center justify-between rounded-2xl bg-zinc-800 px-4 py-3 text-left">
-                    <span className="font-semibold text-zinc-100">{r.name}</span>
-                    <span className="text-sm text-zinc-400">{r.primaryMuscle}</span>
-                  </button>
-                ))}
-              </div>
-              <CloseRow onClose={() => { setReplaceOpen(false); setReplaceReason(null); }} />
+              <CloseRow onClose={() => { setReplaceOpen(false); setReplaceReason(null); setReplaceRecommendation(null); }} />
             </div>
           )}
         </Overlay>

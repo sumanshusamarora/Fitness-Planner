@@ -24,6 +24,17 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 16000;
 /** Bounded so a stalled provider call falls back to the deterministic coach instead of hanging. */
 const DEFAULT_TIMEOUT_MS = 120000;
 
+/**
+ * How many times to re-attempt after a transient invalid/empty structured
+ * output. DeepSeek documents that its JSON mode "may occasionally return empty
+ * content", and reasoning models can emit schema-mismatched JSON — a single
+ * retry materially raises reliability before we fall back to the deterministic
+ * coach.
+ */
+const DEFAULT_MAX_RETRIES = 1;
+
+const RETRY_DELAY_MS = 300;
+
 function toProviderReasoning(effort?: LLMReasoningEffort): "low" | "medium" | "high" | undefined {
   if (!effort) return undefined;
   return effort;
@@ -54,18 +65,11 @@ function unavailable(reason: string): StructuredGenerationFailure {
   return { ok: false, code: "unavailable", reason };
 }
 
-export async function generateStructured<T>(
+async function attemptGenerate<T>(
   options: StructuredGenerateOptions<T>,
+  model: GenerateTextCall["model"],
+  start: number,
 ): Promise<StructuredGenerationResult<T>> {
-  const start = Date.now();
-  const parsed = parseModelIdentifier(options.model);
-
-  if (!hasProviderApiKey(parsed.providerId)) {
-    return unavailable(getCoachLLMUnavailableReason(options.model));
-  }
-
-  const model = ensureModelResolvable(options.model);
-
   try {
     const result = await generateTextImpl({
       model,
@@ -78,9 +82,23 @@ export async function generateStructured<T>(
       timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     });
 
+    let output: T;
+    try {
+      output = result.output as T;
+    } catch (error) {
+      // Empty/whitespace model response (e.g. DeepSeek's occasional empty JSON
+      // mode output) surfaces as a throw on `.output` access. Treat it as a
+      // transient, retryable invalid output rather than a hard provider error.
+      return {
+        ok: false,
+        code: "invalid",
+        reason: error instanceof Error ? error.message : "No output generated.",
+      };
+    }
+
     return {
       ok: true,
-      output: result.output as T,
+      output,
       metadata: {
         provider: result.finalStep.model.provider,
         model: result.finalStep.model.modelId,
@@ -106,4 +124,37 @@ export async function generateStructured<T>(
       reason: error instanceof Error ? error.message : "Unknown structured generation error.",
     };
   }
+}
+
+export async function generateStructured<T>(
+  options: StructuredGenerateOptions<T>,
+): Promise<StructuredGenerationResult<T>> {
+  const start = Date.now();
+  const parsed = parseModelIdentifier(options.model);
+
+  if (!hasProviderApiKey(parsed.providerId)) {
+    return unavailable(getCoachLLMUnavailableReason(options.model));
+  }
+
+  const model = ensureModelResolvable(options.model);
+  const maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
+
+  let last: StructuredGenerationResult<T> = {
+    ok: false,
+    code: "error",
+    reason: "Structured generation did not run.",
+  };
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    last = await attemptGenerate<T>(options, model, start);
+    if (last.ok) return last;
+    // Only retry transient invalid/empty outputs. Hard errors (auth, network,
+    // unsupported) and missing configuration fall through immediately.
+    if (last.code !== "invalid") return last;
+    if (attempt < maxRetries) {
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+    }
+  }
+
+  return last;
 }

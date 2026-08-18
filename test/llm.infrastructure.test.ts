@@ -47,6 +47,16 @@ test("legacy OPENAI_COACH_MODEL maps to provider-prefixed OpenAI model", () => {
   assert.equal(getConfiguredCoachModel(), "openai:gpt-5-mini");
 });
 
+test("defaults split high-effort reasoning onto terra and quick decisions onto luna", () => {
+  delete process.env.COACH_LLM_MODEL;
+  delete process.env.OPENAI_COACH_MODEL;
+
+  assert.equal(getConfiguredCoachModel(), "openai:gpt-5.6-luna");
+  assert.equal(getConfiguredCoachModel("low"), "openai:gpt-5.6-luna");
+  assert.equal(getConfiguredCoachModel("medium"), "openai:gpt-5.6-luna");
+  assert.equal(getConfiguredCoachModel("high"), "openai:gpt-5.6-terra");
+});
+
 test("model parser resolves provider and model ids", () => {
   assert.deepEqual(parseModelIdentifier("openai:gpt-5"), {
     providerId: "openai",
