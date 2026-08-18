@@ -1,7 +1,7 @@
-import { notFound } from "next/navigation";
-import { ActiveWorkout } from "@/components/ActiveWorkout";
+import { notFound, redirect } from "next/navigation";
+import { routes } from "@/lib/routes";
 import { requireCurrentUser } from "@/lib/session";
-import { getActiveWorkoutData } from "@/lib/workouts";
+import { resolveSessionRouteContext } from "@/lib/training-route-context";
 
 export const dynamic = "force-dynamic";
 
@@ -12,9 +12,7 @@ export default async function ActiveWorkoutPage({
 }) {
   const user = await requireCurrentUser();
   const { id } = await params;
-  const data = await getActiveWorkoutData(user.id, Number(id));
-
-  if (!data) notFound();
-
-  return <ActiveWorkout data={data} />;
+  const context = await resolveSessionRouteContext(user.id, Number(id));
+  if (!context) notFound();
+  redirect(routes.session(context.weekId, context.dayId, context.sessionId));
 }

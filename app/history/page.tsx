@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { formatShortDate } from "@/lib/dates";
+import { routes } from "@/lib/routes";
 import { requireCurrentUser } from "@/lib/session";
 import { getSessionHistory, getSessionSummary } from "@/lib/workouts";
 
@@ -30,7 +31,7 @@ export default async function HistoryPage() {
           summary ? (
             <Link
               key={summary.id}
-              href={`/history/${summary.id}`}
+              href={routes.historySession(summary.id)}
               className="block rounded-2xl border border-zinc-800 bg-zinc-900 p-4 transition active:scale-[0.99]"
             >
               <div className="flex items-center justify-between">

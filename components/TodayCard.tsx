@@ -3,11 +3,13 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { routes } from "@/lib/routes";
 
 interface TodayCardProps {
   title: string;
   exerciseCount: number;
   durationMinutes: number;
+  weekId?: number;
   planDayId: number;
   state: "start" | "resume" | "done";
   sessionId: number | null;
@@ -17,6 +19,7 @@ export function TodayCard({
   title,
   exerciseCount,
   durationMinutes,
+  weekId,
   planDayId,
   state,
   sessionId,
@@ -26,7 +29,7 @@ export function TodayCard({
 
   function start() {
     setStarting(true);
-    router.push(`/recovery?planDayId=${planDayId}`);
+    router.push(routes.recovery(planDayId));
   }
 
   return (
@@ -44,7 +47,7 @@ export function TodayCard({
           <div className="space-y-3">
             <p className="text-lg font-semibold text-emerald-400">Done</p>
             <Link
-              href={`/history/${sessionId}`}
+              href={routes.historySession(sessionId)}
               className="block w-full rounded-2xl bg-zinc-800 py-4 text-center text-lg font-semibold text-zinc-100"
             >
               View workout
@@ -54,7 +57,7 @@ export function TodayCard({
 
         {state === "resume" && sessionId != null && (
           <Link
-            href={`/workout/${sessionId}`}
+            href={weekId != null ? routes.session(weekId, planDayId, sessionId) : `/workout/${sessionId}`}
             className="block w-full rounded-2xl bg-emerald-500 py-4 text-center text-lg font-bold text-zinc-950 transition active:scale-[0.98]"
           >
             RESUME WORKOUT

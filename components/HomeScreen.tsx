@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { routes } from "@/lib/routes";
 import { WeekStrip } from "@/components/WeekStrip";
 import type { WeekDayView, WeekView } from "@/lib/week-view";
 
@@ -60,22 +61,30 @@ export function HomeScreen({
       </div>
 
       <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 px-2 py-3">
-        <WeekStrip days={week.days} onSelect={() => router.push("/week")} />
+        <WeekStrip days={week.days} onSelect={() => router.push(routes.week(week.planId))} />
       </div>
 
-      <TodayHero today={today} router={router} />
+      <TodayHero today={today} weekId={week.planId} router={router} />
     </div>
   );
 }
 
-function TodayHero({ today, router }: { today: WeekDayView | null; router: ReturnType<typeof useRouter> }) {
+function TodayHero({
+  today,
+  weekId,
+  router,
+}: {
+  today: WeekDayView | null;
+  weekId: number;
+  router: ReturnType<typeof useRouter>;
+}) {
   if (!today) {
     return (
       <div className="rounded-3xl border border-zinc-800 bg-zinc-900 p-6">
         <p className="text-xs font-semibold uppercase tracking-[0.3em] text-zinc-400">Today</p>
         <h2 className="mt-3 text-3xl font-bold">Nothing scheduled</h2>
         <p className="mt-2 text-zinc-400">This week&apos;s plan is outside today.</p>
-        <Link href="/week" className="mt-5 block rounded-2xl bg-zinc-800 py-4 text-center text-lg font-semibold text-zinc-100">
+        <Link href={routes.week(weekId)} className="mt-5 block rounded-2xl bg-zinc-800 py-4 text-center text-lg font-semibold text-zinc-100">
           VIEW WEEK
         </Link>
       </div>
@@ -90,14 +99,14 @@ function TodayHero({ today, router }: { today: WeekDayView | null; router: Retur
         <p className="mt-2 text-zinc-400">No workout scheduled.</p>
         <button
           type="button"
-          onClick={() => router.push(`/week?focus=${today.planDayId}`)}
+          onClick={() => router.push(routes.day(weekId, today.planDayId))}
           className="mt-5 w-full rounded-2xl bg-emerald-500 py-4 text-lg font-bold text-zinc-950 transition active:scale-[0.98]"
         >
           TRAIN TODAY
         </button>
         <button
           type="button"
-          onClick={() => router.push("/week")}
+          onClick={() => router.push(routes.week(weekId))}
           className="mt-3 w-full rounded-2xl py-3 text-base font-semibold text-zinc-400"
         >
           Move another workout here
@@ -119,7 +128,7 @@ function TodayHero({ today, router }: { today: WeekDayView | null; router: Retur
           <>
             <p className="text-lg font-semibold text-emerald-400">Done</p>
             <Link
-              href={`/history/${today.sessionId}`}
+              href={routes.historySession(today.sessionId)}
               className="block w-full rounded-2xl bg-zinc-800 py-4 text-center text-lg font-semibold text-zinc-100"
             >
               VIEW WORKOUT
@@ -133,14 +142,14 @@ function TodayHero({ today, router }: { today: WeekDayView | null; router: Retur
               {today.status === "ended_early" ? "Ended early" : "Skipped"}
             </p>
             <Link
-              href={`/history/${today.sessionId}`}
+              href={routes.historySession(today.sessionId)}
               className="block w-full rounded-2xl bg-zinc-800 py-4 text-center text-lg font-semibold text-zinc-100"
             >
               VIEW OUTCOME
             </Link>
             <button
               type="button"
-              onClick={() => router.push(`/recovery?planDayId=${today.planDayId}`)}
+              onClick={() => router.push(routes.recovery(today.planDayId))}
               className="w-full rounded-2xl bg-emerald-500 py-4 text-center text-lg font-bold text-zinc-950 transition active:scale-[0.98]"
             >
               START ANOTHER WORKOUT
@@ -157,7 +166,7 @@ function TodayHero({ today, router }: { today: WeekDayView | null; router: Retur
               {today.progressExercises} of {today.exerciseCount} exercises done
             </p>
             <Link
-              href={`/workout/${today.sessionId}`}
+              href={routes.session(weekId, today.planDayId, today.sessionId)}
               className="block w-full rounded-2xl bg-emerald-500 py-4 text-center text-lg font-bold text-zinc-950 transition active:scale-[0.98]"
             >
               RESUME WORKOUT
@@ -169,14 +178,14 @@ function TodayHero({ today, router }: { today: WeekDayView | null; router: Retur
           <>
             <button
               type="button"
-              onClick={() => router.push(`/recovery?planDayId=${today.planDayId}`)}
+              onClick={() => router.push(routes.recovery(today.planDayId))}
               className="w-full rounded-2xl bg-emerald-500 py-4 text-center text-lg font-bold text-zinc-950 transition active:scale-[0.98]"
             >
               START WORKOUT
             </button>
             <button
               type="button"
-              onClick={() => router.push(`/week?focus=${today.planDayId}`)}
+              onClick={() => router.push(routes.day(weekId, today.planDayId))}
               className="w-full rounded-2xl py-3 text-base font-semibold text-zinc-400"
             >
               Can&apos;t train today?

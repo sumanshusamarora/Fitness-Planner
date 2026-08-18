@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { formatWeight } from "@/lib/dates";
+import { routes } from "@/lib/routes";
 import type { WeekDayView, WeekView } from "@/lib/week-view";
 import { CoachDecisionCard } from "./CoachDecisionCard";
 import { WeekRebuildModal } from "./WeekRebuildModal";
@@ -303,7 +304,7 @@ export function WeekPlanner({
 
       {week.weekComplete && !week.nextWeekExists && (
         <Link
-          href="/week/next"
+          href={routes.weekNext()}
           className="block w-full rounded-2xl bg-emerald-500 py-4 text-center text-lg font-bold text-zinc-950 transition active:scale-[0.98]"
         >
           PLAN NEXT WEEK
@@ -393,18 +394,18 @@ function SheetBody(props: {
         <p className="mb-4 text-lg font-semibold">{isRest ? "Recovery day" : day.title}</p>
         <div className="space-y-3">
           {day.status === "completed" && day.sessionId != null && (
-            <Link href={`/history/${day.sessionId}`} className="block w-full rounded-2xl bg-emerald-500 py-4 text-center text-lg font-bold text-zinc-950">
+            <Link href={routes.historySession(day.sessionId)} className="block w-full rounded-2xl bg-emerald-500 py-4 text-center text-lg font-bold text-zinc-950">
               VIEW WORKOUT
             </Link>
           )}
           {(day.status === "ended_early" || day.status === "skipped") && day.sessionId != null && (
-            <Link href={`/history/${day.sessionId}`} className="block w-full rounded-2xl bg-zinc-800 py-4 text-center text-lg font-semibold text-zinc-100">
+            <Link href={routes.historySession(day.sessionId)} className="block w-full rounded-2xl bg-zinc-800 py-4 text-center text-lg font-semibold text-zinc-100">
               VIEW OUTCOME
             </Link>
           )}
           {day.status === "in-progress" && day.sessionId != null && (
             <>
-              <Link href={`/workout/${day.sessionId}`} className="block w-full rounded-2xl bg-emerald-500 py-4 text-center text-lg font-bold text-zinc-950">
+              <Link href={routes.session(props.week.planId, day.planDayId, day.sessionId)} className="block w-full rounded-2xl bg-emerald-500 py-4 text-center text-lg font-bold text-zinc-950">
                 RESUME
               </Link>
               {!day.sessionHasActualWork && (
@@ -414,7 +415,7 @@ function SheetBody(props: {
           )}
           {isUnstarted && !isRest && (
             <>
-              <Link href={`/recovery?planDayId=${day.planDayId}`} className="block w-full rounded-2xl bg-emerald-500 py-4 text-center text-lg font-bold text-zinc-950">
+              <Link href={routes.recovery(day.planDayId)} className="block w-full rounded-2xl bg-emerald-500 py-4 text-center text-lg font-bold text-zinc-950">
                 START
               </Link>
               {day.origin === "extra" ? (

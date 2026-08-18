@@ -37,11 +37,13 @@ export async function POST(req: Request) {
   }
 
   let planDayId = body.planDayId;
+  let weekId: number | null = null;
   if (!planDayId) {
     const plan = await getActivePlan(user.id);
     if (!plan) {
       return NextResponse.json({ error: "No active plan" }, { status: 400 });
     }
+    weekId = plan.id;
     const day = await getPlanDay(plan.id, todayDayNumber());
     if (!day) {
       return NextResponse.json({ error: "No workout scheduled today" }, { status: 400 });
@@ -51,7 +53,7 @@ export async function POST(req: Request) {
 
   const owned = (
     await db
-      .select({ id: workoutPlanDays.id })
+      .select({ id: workoutPlanDays.id, weekId: workoutPlanDays.workoutPlanId })
       .from(workoutPlanDays)
       .innerJoin(workoutPlans, eq(workoutPlanDays.workoutPlanId, workoutPlans.id))
       .where(and(eq(workoutPlanDays.id, planDayId), eq(workoutPlans.userId, user.id)))
@@ -60,6 +62,7 @@ export async function POST(req: Request) {
   if (!owned) {
     return NextResponse.json({ error: "Day not found." }, { status: 404 });
   }
+  if (weekId == null) weekId = owned.weekId;
 
   const [log] = await db
     .insert(recoveryLogs)
@@ -94,5 +97,5 @@ export async function POST(req: Request) {
     .set({ workoutSessionId: session.id })
     .where(eq(recoveryLogs.id, log.id));
 
-  return NextResponse.json({ sessionId: session.id });
+  return NextResponse.json({ sessionId: session.id, weekId, dayId: planDayId });
 }

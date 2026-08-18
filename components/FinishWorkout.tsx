@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { routes } from "@/lib/routes";
 
 interface ActivitySummary {
   warmupMinutes: number;
@@ -25,6 +26,7 @@ interface FinishWorkoutProps {
   setCount: number;
   durationText: string;
   activities?: ActivitySummary | null;
+  nav?: { weekId: number; dayId: number };
 }
 
 const ENERGY = ["Very Low", "Low", "Good", "Great"];
@@ -51,6 +53,10 @@ export function FinishWorkout(props: FinishWorkoutProps) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ energyRating: energy, overallRpe: effort }),
     });
+    if (props.nav) {
+      router.push(routes.day(props.nav.weekId, props.nav.dayId));
+      return;
+    }
     router.push("/");
   }
 
@@ -141,7 +147,13 @@ export function FinishWorkout(props: FinishWorkoutProps) {
       {!needsFinish && (
         <button
           type="button"
-          onClick={() => router.push("/")}
+          onClick={() => {
+            if (props.nav) {
+              router.push(routes.day(props.nav.weekId, props.nav.dayId));
+              return;
+            }
+            router.push("/");
+          }}
           className="w-full rounded-2xl bg-emerald-500 py-4 text-lg font-bold text-zinc-950 transition active:scale-[0.98]"
         >
           DONE

@@ -57,8 +57,19 @@ export interface WeekView {
   nextWeekExists: boolean;
 }
 
-export async function getWeekView(userId: number): Promise<WeekView | null> {
-  const plan = await getActivePlan(userId);
+export async function getWeekView(
+  userId: number,
+  planId?: number,
+): Promise<WeekView | null> {
+  const plan = planId
+    ? (
+        await db
+          .select()
+          .from(workoutPlans)
+          .where(and(eq(workoutPlans.id, planId), eq(workoutPlans.userId, userId)))
+          .limit(1)
+      )[0] ?? null
+    : await getActivePlan(userId);
   if (!plan) return null;
 
   const days = await db

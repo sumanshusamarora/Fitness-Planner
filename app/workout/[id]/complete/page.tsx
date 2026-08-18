@@ -1,8 +1,7 @@
-import { notFound } from "next/navigation";
-import { FinishWorkout } from "@/components/FinishWorkout";
+import { notFound, redirect } from "next/navigation";
+import { routes } from "@/lib/routes";
 import { requireCurrentUser } from "@/lib/session";
-import { getSessionSummary } from "@/lib/workouts";
-import { buildSessionActivitySummary } from "@/lib/session-activities";
+import { resolveSessionRouteContext } from "@/lib/training-route-context";
 
 export const dynamic = "force-dynamic";
 
@@ -13,31 +12,7 @@ export default async function CompletePage({
 }) {
   const user = await requireCurrentUser();
   const { id } = await params;
-  const sessionId = Number(id);
-  const [summary, activities] = await Promise.all([
-    getSessionSummary(user.id, sessionId),
-    buildSessionActivitySummary(user.id, sessionId).catch(() => null),
-  ]);
-
-  if (!summary) notFound();
-
-  return (
-    <FinishWorkout
-      sessionId={summary.id}
-      title={summary.title}
-      status={summary.status}
-      completedExerciseCount={summary.completedExerciseCount}
-      skippedExerciseCount={summary.skippedExerciseCount}
-      notPerformedCount={
-        summary.exerciseCount -
-        summary.completedExerciseCount -
-        summary.skippedExerciseCount -
-        summary.replacedExerciseCount
-      }
-      replacedExerciseCount={summary.replacedExerciseCount}
-      setCount={summary.setCount}
-      durationText={summary.durationText}
-      activities={activities}
-    />
-  );
+  const context = await resolveSessionRouteContext(user.id, Number(id));
+  if (!context) notFound();
+  redirect(routes.sessionComplete(context.weekId, context.dayId, context.sessionId));
 }

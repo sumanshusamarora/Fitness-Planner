@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { routes } from "@/lib/routes";
 
 const METRICS = [
   { key: "sleep", label: "Sleep", low: "poor", high: "great" },
@@ -32,8 +33,16 @@ export function RecoveryCheck({ planDayId }: { planDayId: number | null }) {
       headers: { "Content-Type": "application/json" },
       body,
     });
-    const data = await res.json();
+    const data = (await res.json()) as {
+      sessionId?: number;
+      weekId?: number | null;
+      dayId?: number | null;
+    };
     if (data.sessionId) {
+      if (data.weekId != null && data.dayId != null) {
+        router.push(routes.session(data.weekId, data.dayId, data.sessionId));
+        return;
+      }
       router.push(`/workout/${data.sessionId}`);
     } else {
       setBusy(false);

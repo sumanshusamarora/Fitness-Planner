@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { formatWeight } from "@/lib/dates";
+import { routes } from "@/lib/routes";
 import { smallestIncrement } from "@/lib/progression";
 import { Stepper } from "@/components/Stepper";
 import { ExerciseMedia, type ExerciseMediaData } from "@/components/ExerciseMedia";
@@ -90,6 +91,11 @@ export interface ActiveWorkoutData {
   hasActualWork: boolean;
 }
 
+interface ActiveWorkoutNav {
+  weekId: number;
+  dayId: number;
+}
+
 type Phase = "setup" | "rpe" | "rest" | "done";
 
 const RPE_OPTIONS = [5, 6, 7, 8, 9, 10];
@@ -118,7 +124,7 @@ function phaseFor(ex: Exercise): Phase {
     : "setup";
 }
 
-export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
+export function ActiveWorkout({ data, nav }: { data: ActiveWorkoutData; nav?: ActiveWorkoutNav }) {
   const router = useRouter();
   const { sessionId, title, exercises: initialExercises } = data;
 
@@ -611,11 +617,19 @@ export function ActiveWorkout({ data }: { data: ActiveWorkoutData }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ reason }),
     });
+    if (nav) {
+      router.push(routes.sessionComplete(nav.weekId, nav.dayId, sessionId));
+      return;
+    }
     router.push(`/workout/${sessionId}/complete`);
   }
 
   function finish() {
     setFinishOpen(false);
+    if (nav) {
+      router.push(routes.sessionComplete(nav.weekId, nav.dayId, sessionId));
+      return;
+    }
     router.push(`/workout/${sessionId}/complete`);
   }
 
