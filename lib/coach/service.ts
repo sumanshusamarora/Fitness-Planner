@@ -3,7 +3,7 @@ import { db } from "@/db";
 import { weeklyPlanProposals } from "@/db/schema";
 import { getActivePlan } from "@/lib/workouts";
 import { isAICoachAvailable } from "./ai/client";
-import { OpenAICoachReasoner } from "./reasoners/openai";
+import { RuntimeLLMCoachReasoner } from "./reasoners/openai";
 import { analyseWeek } from "./analyseWeek";
 import { buildTrainingContext } from "./buildTrainingContext";
 import { buildInitialTrainingContext } from "./initialContext";
@@ -133,7 +133,7 @@ async function buildNextWeekProposal(
 ): Promise<WeeklyPlanProposal> {
   if (isAICoachAvailable()) {
     try {
-      return await new OpenAICoachReasoner().proposeNextWeek(context, analysis);
+      return await new RuntimeLLMCoachReasoner().proposeNextWeek(context, analysis);
     } catch (error) {
       console.warn("[coach] AI next-week unavailable; falling back to deterministic.", error);
     }
@@ -146,7 +146,7 @@ async function buildInitialWeekProposal(
 ): Promise<WeeklyPlanProposal> {
   if (isAICoachAvailable()) {
     try {
-      return await new OpenAICoachReasoner().proposeInitialWeek(context);
+      return await new RuntimeLLMCoachReasoner().proposeInitialWeek(context);
     } catch (error) {
       console.warn("[coach] AI initial-week unavailable; falling back to deterministic.", error);
     }

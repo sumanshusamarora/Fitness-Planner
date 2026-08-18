@@ -10,7 +10,7 @@ import {
 } from "@/db/schema";
 import { captureDays, computePlanStateHash as computeRevisionPlanStateHash, recordRevision } from "@/lib/plan-revisions";
 import { isAICoachAvailable } from "@/lib/coach/ai/client";
-import { OpenAICoachReasoner } from "@/lib/coach/reasoners/openai";
+import { RuntimeLLMCoachReasoner } from "@/lib/coach/reasoners/openai";
 import { buildWeekRebuildContext } from "./buildContext";
 import { computeWeekRebuildDiff } from "./diff";
 import { proposeWeekRebuildDeterministic } from "./deterministic";
@@ -22,7 +22,7 @@ export interface StoredWeekRebuild {
   id: number;
   status: string;
   proposal: WeekRebuildProposal;
-  coachSource: "gpt5" | "fallback";
+  coachSource: "llm" | "fallback";
   feedbackId: number | null;
   diff: ReturnType<typeof computeWeekRebuildDiff>;
 }
@@ -30,7 +30,7 @@ export interface StoredWeekRebuild {
 async function buildProposal(context: WeekRebuildContext): Promise<WeekRebuildProposal> {
   if (isAICoachAvailable()) {
     try {
-      const proposal = await new OpenAICoachReasoner().proposeWeekRebuild(context);
+      const proposal = await new RuntimeLLMCoachReasoner().proposeWeekRebuild(context);
       return validateWeekRebuildProposal(proposal, context);
     } catch (error) {
       console.warn("[coach] AI week-rebuild unavailable; falling back to deterministic.", error);
@@ -147,7 +147,7 @@ export async function proposeWeekRebuild(input: {  userId: number;
     id: row.id,
     status: row.status,
     proposal,
-    coachSource: proposal.aiMetadata?.model ? "gpt5" : "fallback",
+    coachSource: proposal.aiMetadata?.source === "llm" ? "llm" : "fallback",
     feedbackId,
     diff,
   };
@@ -181,7 +181,7 @@ export async function getWeekRebuildProposal(
     id: row.id,
     status: row.status,
     proposal,
-    coachSource: proposal.aiMetadata?.model ? "gpt5" : "fallback",
+    coachSource: proposal.aiMetadata?.source === "llm" ? "llm" : "fallback",
     feedbackId: row.feedbackId,
     diff,
   };
@@ -263,7 +263,7 @@ export async function respondToWeekRebuild(
     id: row.id,
     status: proposal.questions.length ? "awaiting_input" : "draft",
     proposal,
-    coachSource: proposal.aiMetadata?.model ? "gpt5" : "fallback",
+    coachSource: proposal.aiMetadata?.source === "llm" ? "llm" : "fallback",
     feedbackId: row.feedbackId,
     diff: computeWeekRebuildDiff(context.currentWeek.days, proposal.proposedDays),
   };

@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { zodTextFormat } from "openai/helpers/zod";
-import { COACH_MODEL, getOpenAIClient, isAICoachAvailable } from "./client";
+import { COACH_MODEL, getAICoachUnavailableReason, isAICoachAvailable } from "./client";
+import { generateStructured } from "@/lib/llm/generate-structured";
 import {
   COACH_PROMPT_VERSION,
   CORE_AUTHORITATIVE_DATA,
@@ -99,52 +99,51 @@ export type CoachDecisionResult<T> = { ok: true; decision: T; metadata: CoachRun
 export type CoachDecisionFailure = { ok: false; reason: string; code: "unavailable" | "invalid" | "error" };
 
 /**
- * The single shared entry point for runtime LLM coaching. All GPT-5 calls go
+ * The single shared entry point for runtime LLM coaching.
  * through here. It never writes to the database and never mutates plans.
  */
 export async function runCoachDecision<T>(
   options: CoachDecisionRunOptions<T>,
 ): Promise<CoachDecisionResult<T> | CoachDecisionFailure> {
   if (!isAICoachAvailable()) {
-    return { ok: false, reason: "AI coach is not configured (no OPEN_API_KEY).", code: "unavailable" };
+    return { ok: false, reason: getAICoachUnavailableReason(), code: "unavailable" };
   }
 
   const { mode, schema } = options;
   const model = options.model ?? COACH_MODEL;
   const prompt = buildCoachPrompt(mode, options.context, options.constraints);
-  const tools = options.allowWebResearch ? [{ type: "web_search" as const }] : undefined;
 
-  try {
-    const response = await getOpenAIClient().responses.parse({
-      model,
-      instructions: prompt.instructions,
-      input: prompt.input,
-      text: { format: zodTextFormat(schema, `coach_decision_${mode}`) },
-      reasoning: { effort: options.reasoningEffort ?? REASONING_EFFORT[mode] },
-      tools,
-    });
+  const result = await generateStructured<T>({
+    model,
+    schema,
+    schemaName: `coach_decision_${mode}`,
+    system: prompt.instructions,
+    input: prompt.input,
+    reasoningEffort: options.reasoningEffort ?? REASONING_EFFORT[mode],
+    allowWebResearch: options.allowWebResearch,
+    timeoutMs: options.timeoutMs,
+  });
 
-    const decision = response.output_parsed as T | null;
-    if (decision == null) {
-      return { ok: false, reason: "Model did not return structured output.", code: "invalid" };
-    }
-
-    const researchUsed = Array.isArray(response.output)
-      ? response.output.some((item) => item.type === "web_search_call")
-      : false;
-
-    const metadata: CoachRunMetadata = {
-      provider: "openai",
-      model,
-      promptVersion: COACH_PROMPT_VERSION,
-      mode,
-      responseId: response.id ?? null,
-      createdAt: new Date().toISOString(),
-      researchUsed,
-    };
-
-    return { ok: true, decision, metadata };
-  } catch (error) {
-    return { ok: false, reason: error instanceof Error ? error.message : "Unknown coach error.", code: "error" };
+  if (!result.ok) {
+    return { ok: false, reason: result.reason, code: result.code };
   }
+
+  const metadata: CoachRunMetadata = {
+    provider: result.metadata.provider,
+    model: result.metadata.model,
+    promptVersion: COACH_PROMPT_VERSION,
+    mode,
+    source: "llm",
+    responseId: result.metadata.responseId,
+    createdAt: new Date().toISOString(),
+    latencyMs: result.metadata.latencyMs,
+    inputTokens: result.metadata.inputTokens,
+    outputTokens: result.metadata.outputTokens,
+    totalTokens: result.metadata.totalTokens,
+    // Provider web research/tool-source signals are optional. Keep this false
+    // unless explicit evidence is returned by provider metadata.
+    researchUsed: false,
+  };
+
+  return { ok: true, decision: result.output, metadata };
 }

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /**
- * Zod schemas for the OpenAI reasoner's structured outputs.
+ * Zod schemas for the runtime LLM reasoner's structured outputs.
  *
  * These are server-side only. Every schema is deliberately mode-specific and
  * mirrors the existing deterministic domain types so a validated AI proposal

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { zodTextFormat } from "openai/helpers/zod";
+import { zodSchema } from "ai";
 import { CoachDecisionSchemas } from "@/lib/coach/ai/schemas";
 
 const EXPECTED_MODES = [
@@ -25,12 +25,12 @@ type JsonSchema = {
 };
 
 function extractJsonSchema(mode: string): JsonSchema {
-  const format = zodTextFormat(CoachDecisionSchemas[mode as keyof typeof CoachDecisionSchemas], `coach_decision_${mode}`) as unknown as {
-    schema?: JsonSchema;
-    json_schema?: { schema?: JsonSchema };
+  const format = zodSchema(CoachDecisionSchemas[mode as keyof typeof CoachDecisionSchemas] as never) as unknown as {
+    jsonSchema?: JsonSchema;
+    json_schema?: JsonSchema;
   };
 
-  const schema = format.json_schema?.schema ?? format.schema;
+  const schema = format.jsonSchema ?? format.json_schema;
   assert.ok(schema, `Could not extract JSON schema for ${mode}`);
   return schema;
 }
@@ -65,7 +65,7 @@ function assertNoOptionalObjectFields(schema: JsonSchema, path = "root") {
   }
 }
 
-test("all runtime coach schemas compile to OpenAI Structured Output format", () => {
+test("all runtime coach schemas compile to AI SDK structured schema format", () => {
   const registeredModes = Object.keys(CoachDecisionSchemas).sort();
   assert.deepEqual(registeredModes, [...EXPECTED_MODES].sort());
 
@@ -75,7 +75,7 @@ test("all runtime coach schemas compile to OpenAI Structured Output format", () 
   }
 });
 
-test("no registered OpenAI schema contains optional object fields", () => {
+test("no registered structured schema contains optional object fields", () => {
   for (const mode of EXPECTED_MODES) {
     const schema = extractJsonSchema(mode);
     assertNoOptionalObjectFields(schema, mode);

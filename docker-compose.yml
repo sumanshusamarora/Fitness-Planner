@@ -25,7 +25,8 @@ services:
     environment:
       DATABASE_URL: postgresql://fitness:fitness@db:5432/fitness
       OPEN_API_KEY: ${OPEN_API_KEY:-}
-      OPENAI_COACH_MODEL: ${OPENAI_COACH_MODEL:-gpt-5}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      COACH_LLM_MODEL: ${COACH_LLM_MODEL:-openai:gpt-5}
     ports:
       - "8881:3000"
 

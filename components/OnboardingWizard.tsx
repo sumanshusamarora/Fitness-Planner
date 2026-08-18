@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { Loader } from "./Loader";
 
 export interface OnboardingAnswers {
   primaryGoal: string | null;
@@ -65,6 +66,7 @@ export function OnboardingWizard({
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [coaching, setCoaching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [answers, setAnswers] = useState<OnboardingAnswers>({
     primaryGoal: initial?.primaryGoal ?? null,
@@ -139,8 +141,10 @@ export function OnboardingWizard({
       return;
     }
 
+    setCoaching(true);
     const propRes = await fetch("/api/plans/initial-proposal", { method: "POST" });
     if (!propRes.ok) {
+      setCoaching(false);
       setError("Could not build your week. Try again.");
       setBusy(false);
       return;
@@ -415,6 +419,8 @@ export function OnboardingWizard({
           {busy ? "Saving…" : step === totalSteps - 1 ? "FINISH" : "NEXT"}
         </button>
       </div>
+
+      {coaching && <Loader variant="overlay" context="initial-week" />}
     </div>
   );
 }

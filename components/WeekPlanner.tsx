@@ -38,7 +38,7 @@ interface AddWorkoutData {
   reason: string;
   note: string | null;
   exercises: AddWorkoutExercise[];
-  aiMetadata?: { model: string };
+  aiMetadata?: { provider?: string; model: string };
   aiRationale?: string[];
   confidence?: string;
   safetyFlags?: string[];

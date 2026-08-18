@@ -12,17 +12,22 @@ export type CoachMode =
 export type CoachReasoningEffort = "low" | "medium" | "high";
 
 /**
- * Metadata attached to any coaching decision that came from the OpenAI
- * reasoner. Persisted inside proposal JSONB so decisions stay auditable
- * without a separate audit subsystem.
+ * Metadata attached to any coaching decision that came from an LLM provider.
+ * Persisted inside proposal JSONB so decisions stay auditable without a
+ * separate audit subsystem.
  */
 export interface CoachRunMetadata {
-  provider: "openai";
+  provider: string;
   model: string;
   promptVersion: string;
   mode: CoachMode;
+  source: "llm" | "deterministic_fallback";
   responseId: string | null;
   createdAt: string;
+  latencyMs: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
   researchUsed: boolean;
 }
 

@@ -19,7 +19,7 @@ export interface RebuildFollowUp {
 interface StoredRebuild {
   id: number;
   status: string;
-  coachSource: "gpt5" | "fallback";
+  coachSource: "llm" | "fallback";
   feedbackId: number | null;
   proposal: {
     overallAction: string;
@@ -37,9 +37,16 @@ interface StoredRebuild {
       rationale: string[];
       exercises: { exerciseName: string; sets: number; minReps: number; maxReps: number; suggestedWeightKg: number | null }[];
     }[];
-    aiMetadata?: { model: string; promptVersion?: string };
+    aiMetadata?: { provider?: string; model: string; promptVersion?: string };
   };
   diff: { summary: string[] };
+}
+
+function coachLabel(source: "llm" | "fallback", metadata?: { provider?: string; model: string }): string {
+  if (source !== "llm" || !metadata?.model) return "Local fallback";
+  if (metadata.provider === "deepseek") return "DeepSeek";
+  if (metadata.provider === "openai") return "GPT-5";
+  return metadata.model;
 }
 
 export function WeekRebuildModal({
@@ -314,7 +321,7 @@ export function WeekRebuildModal({
               model={proposal.proposal.aiMetadata?.model}
             />
             <div className="rounded-xl bg-zinc-800/70 px-3 py-2 text-xs text-zinc-400">
-              Coach: {proposal.coachSource === "gpt5" ? "GPT-5" : "Local fallback"}
+              Coach: {coachLabel(proposal.coachSource, proposal.proposal.aiMetadata)}
               {proposal.proposal.aiMetadata?.promptVersion ? ` · Prompt ${proposal.proposal.aiMetadata.promptVersion}` : ""}
             </div>
 

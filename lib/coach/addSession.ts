@@ -1,6 +1,6 @@
 import type { AddWorkoutProposal, AddWorkoutExercise } from "@/lib/schedule";
 import { isAICoachAvailable } from "./ai/client";
-import { OpenAICoachReasoner } from "./reasoners/openai";
+import { RuntimeLLMCoachReasoner } from "./reasoners/openai";
 import { proposeRestDayWorkout, type Effort } from "./restDay";
 
 export interface AddSessionInput {
@@ -21,7 +21,7 @@ export async function proposeAddSession(input: AddSessionInput): Promise<AddWork
 
   if (isAICoachAvailable()) {
     try {
-      const { decision, metadata } = await new OpenAICoachReasoner().proposeExtraSession({
+      const { decision, metadata } = await new RuntimeLLMCoachReasoner().proposeExtraSession({
         userId,
         workoutPlanId,
         dayNumber,

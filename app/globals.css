@@ -15,6 +15,22 @@ body {
   background-color: #09090b;
 }
 
+/* Loader rotating-message crossfade */
+.loader-message {
+  animation: loader-fade-in 0.3s ease;
+}
+
+@keyframes loader-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* Sanitized external-provider instructions */
 .external-instructions h1,
 .external-instructions h2,

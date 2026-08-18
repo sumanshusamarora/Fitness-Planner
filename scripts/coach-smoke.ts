@@ -5,14 +5,15 @@ import { ExtraSessionCoachDecisionSchema, type ExtraSessionCoachDecision } from 
 import { validateExtraSessionDecision } from "@/lib/coach/ai/validation";
 
 /**
- * Manual smoke test for the runtime AI coach. Requires OPEN_API_KEY and makes
- * one bounded extra-session request. It never touches the database.
+ * Manual smoke test for the runtime AI coach. Requires a key for the selected
+ * model provider (for example OPEN_API_KEY or DEEPSEEK_API_KEY) and makes one
+ * bounded extra-session request. It never touches the database.
  *
  *   npm run coach:smoke
  */
 async function main() {
   if (!isAICoachAvailable()) {
-    console.error("OPEN_API_KEY is not set. Export it before running the AI coach smoke test.");
+    console.error("No API key is configured for the selected COACH_LLM_MODEL. Export provider key(s) before running.");
     process.exitCode = 1;
     return;
   }

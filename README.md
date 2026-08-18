@@ -171,7 +171,7 @@ anything is written.
 | `npm run coach -- users` | List users                               |
 | `npm run coach -- propose --user U` | Create/read a reviewable weekly proposal |
 | `npm run coach -- approve ID --confirm --user U` | Explicitly apply an approved proposal |
-| `npm run coach:smoke` | One bounded AI-coach request (requires `OPEN_API_KEY`) |
+| `npm run coach:smoke` | One bounded AI-coach request (requires key for selected `COACH_LLM_MODEL`) |
 | `npm run exercises:source` | Scrape MuscleWiki → `data/external/musclewiki.jsonl` (offline, explicit) |
 | `npm run exercises:import -- <jsonl>` | Import a catalogue snapshot into `external_exercises` |
 | `npm run exercises:match` | Rank + preselect mappings (`--dry-run` to only inspect) |
@@ -309,12 +309,12 @@ questions before approval.
 
 ## Optional runtime AI coach
 
-When `OPEN_API_KEY` is set (and `NODE_ENV` is not `test`), the coach can
-augment first-week, next-week, and rest-day (extra-session) proposals with a
-GPT-5 reasoner (`lib/coach/reasoners/openai.ts`) behind the shared
+When the selected provider key is set (and `NODE_ENV` is not `test`), the coach
+can augment first-week, next-week, and rest-day (extra-session) proposals with
+the runtime LLM reasoner (`lib/coach/reasoners/openai.ts`) behind the shared
 `CoachReasoner` interface. All runtime calls go through
-`lib/coach/ai/runCoach.ts` using the OpenAI Responses API with Zod structured
-outputs.
+`lib/coach/ai/runCoach.ts`, then through the provider-neutral LLM wrapper
+(`lib/llm/*`) built on Vercel AI SDK structured outputs.
 
 The AI coach is **read-only**:
 
@@ -327,9 +327,17 @@ The AI coach is **read-only**:
 - Any missing key, API error, or invalid output falls back to the deterministic
   engine automatically.
 
-Configuration lives in `lib/coach/ai/client.ts`: `OPEN_API_KEY` enables it and
-`OPENAI_COACH_MODEL` overrides the model (default `gpt-5`). Normal `npm test`
-and `npm run build` do not require the key; the manual smoke test does:
+Configuration is centralized in `lib/llm/config.ts`:
+
+- `COACH_LLM_MODEL` selects the model using `provider:model` format
+  (for example `openai:gpt-5` or `deepseek:deepseek-chat`).
+- `OPEN_API_KEY` remains supported for OpenAI.
+- `DEEPSEEK_API_KEY` enables DeepSeek.
+- `OPENAI_COACH_MODEL` remains as a legacy fallback and is mapped to
+  `openai:<model>` when `COACH_LLM_MODEL` is unset.
+
+Normal `npm test` and `npm run build` do not require any LLM key; the manual
+smoke test does:
 
 ```bash
 npm run coach:smoke

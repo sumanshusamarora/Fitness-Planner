@@ -52,13 +52,14 @@ interface CompactExercise {
 }
 
 /**
- * Runtime AI coaching backed by GPT-5. Read-only: every method only reasons
+ * Runtime AI coaching backed by the configured LLM provider. Read-only: every
+ * method only reasons
  * and returns a proposal/decision; writes remain in applyProposal/
  * applyPlanAdjustment behind explicit approval. Any failure (missing key, API
  * error, invalid output) surfaces as a CoachUnavailable/Invalid error so the
  * caller can fall back to the deterministic coach.
  */
-export class OpenAICoachReasoner implements CoachReasoner {
+export class RuntimeLLMCoachReasoner implements CoachReasoner {
   async proposeInitialWeek(context: InitialTrainingContext): Promise<WeeklyPlanProposal> {
     const constraints = initialWeekConstraints(context);
     const rolling = await buildRollingCoachContext({ userId: context.user.id });
@@ -116,7 +117,7 @@ export class OpenAICoachReasoner implements CoachReasoner {
       proposedWeekNumber: 1,
       proposedStartsOn: toISODate(startOfWeekMonday(new Date())),
       aiMetadata: result.metadata,
-      methodologyVersion: `openai-${result.metadata.model}-v1`,
+      methodologyVersion: `llm-${result.metadata.provider}-${result.metadata.model}-v1`,
     };
 
     // Normalise to the deterministic initial-week conventions: unique negative
@@ -229,7 +230,7 @@ export class OpenAICoachReasoner implements CoachReasoner {
       proposedWeekNumber: context.sourcePlan.weekNumber + 1,
       proposedStartsOn: addDaysToISODate(context.sourcePlan.startsOn, 7),
       aiMetadata: result.metadata,
-      methodologyVersion: `openai-${result.metadata.model}-v1`,
+      methodologyVersion: `llm-${result.metadata.provider}-${result.metadata.model}-v1`,
     };
 
     // Keep-decision loads must reference the real source plan, never model-invented values.
@@ -449,6 +450,9 @@ export class OpenAICoachReasoner implements CoachReasoner {
     return proposal;
   }
 }
+
+// Backward-compatible alias while call sites migrate to provider-neutral naming.
+export { RuntimeLLMCoachReasoner as OpenAICoachReasoner };
 
 function buildRebuildAIContext(context: WeekRebuildContext) {
   const progress = context.progress;
